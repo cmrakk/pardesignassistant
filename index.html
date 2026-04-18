@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PAR Aircraft Design Assistant</title>
+<style>
+:root{--bg:#1a1a2e;--bg2:#16213e;--bg3:#0f3460;--fg:#e0e0e0;--fg2:#a0a0b8;--accent:#4cc9f0;--accent2:#f72585;--green:#4ade80;--orange:#fb923c;--purple:#a78bfa;--yellow:#facc15;--card:#1e2a4a;--border:#2a3a5a;--input-bg:#0d1b3e;--wing:#4488cc;--ail:#66bbee;--htail:#44aa66;--elev:#66dd88;--fin:#cc8844;--rud:#ffaa66;--flap:#a78bfa;--fuse:#556}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5}
+h1{font-size:1.5em;color:var(--accent);font-weight:600}
+h2{font-size:1.1em;color:var(--accent);margin-bottom:8px;border-bottom:1px solid var(--border);padding-bottom:4px}
+h3{font-size:0.95em;color:var(--fg2);margin:8px 0 4px}
+.header{background:var(--bg2);padding:14px 24px;border-bottom:2px solid var(--accent)}
+.header .sub{color:var(--fg2);font-size:0.82em}
+.container{display:grid;grid-template-columns:340px 1fr;gap:14px;padding:14px;max-width:1400px;margin:0 auto}
+@media(max-width:900px){.container{grid-template-columns:1fr}}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:14px}
+.input-panel{position:sticky;top:14px;align-self:start}
+.results{display:flex;flex-direction:column;gap:10px}
+label{display:block;font-size:0.82em;color:var(--fg2);margin-bottom:2px}
+input[type=number],select{width:100%;background:var(--input-bg);border:1px solid var(--border);color:var(--fg);padding:5px 7px;border-radius:4px;font-size:13px}
+input[type=number]:focus,select:focus{outline:none;border-color:var(--accent)}
+.row{display:flex;gap:8px;margin-bottom:7px}
+.row>div{flex:1}
+.radio-group{display:flex;gap:0;margin-bottom:8px}
+.radio-group label{flex:1;text-align:center;padding:5px;cursor:pointer;background:var(--input-bg);border:1px solid var(--border);color:var(--fg2);font-size:12px;margin:0}
+.radio-group label:first-child{border-radius:4px 0 0 4px}
+.radio-group label:last-child{border-radius:0 4px 4px 0}
+.radio-group input{display:none}
+.radio-group input:checked+span{color:var(--accent);font-weight:600}
+.check-row{display:flex;align-items:center;gap:6px;margin:6px 0}
+.check-row input[type=checkbox]{accent-color:var(--accent);width:15px;height:15px}
+.check-row label{margin:0;font-size:12px;color:var(--fg)}
+.divider{border:none;border-top:1px solid var(--border);margin:8px 0}
+.unit{color:var(--fg2);font-size:0.78em}
+.summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.stat{background:var(--bg2);border-radius:5px;padding:8px}
+.stat .val{font-size:1.3em;font-weight:700;color:var(--accent)}
+.stat .lbl{font-size:0.75em;color:var(--fg2)}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:4px 6px;text-align:left;border-bottom:1px solid var(--border)}
+th{color:var(--fg2);font-weight:500;font-size:0.82em}
+tr.total{font-weight:700;border-top:2px solid var(--accent)}
+tr.total td{color:var(--accent)}
+.sc{display:flex;gap:6px;align-items:center;padding:6px;background:var(--bg2);border-radius:5px;margin-bottom:5px}
+.sc .dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+.sc .info{flex:1}
+.sc .name{font-weight:600;font-size:0.85em}
+.sc .dims{color:var(--fg2);font-size:0.78em}
+.sc .blk{font-size:1em;font-weight:700;color:var(--accent);text-align:right;white-space:nowrap}
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media(max-width:900px){.chart-row{grid-template-columns:1fr}}
+canvas{width:100%;background:var(--bg2);border-radius:5px;border:1px solid var(--border)}
+.tip{background:var(--bg3);border-left:3px solid var(--accent);padding:7px 10px;font-size:0.82em;color:var(--fg2);margin-top:7px;border-radius:0 4px 4px 0}
+.tip strong{color:var(--fg)}
+.warn{border-left-color:var(--orange)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0;font-size:0.78em}
+.legend-item{display:flex;align-items:center;gap:3px}
+.legend-item .sw{width:10px;height:10px;border-radius:2px}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>PAR Aircraft Design Assistant</h1>
+  <div class="sub">Aircraft sizing calculator &mdash; lift, drag, camber, downwash, stall, pitch trim, CoG placement &amp; stability. Calibrated to PAR mod post-physics-overhaul (real 2D CL, 16° stall peak, NACA 2412-equivalent slope-LE camber).</div>
+</div>
+<div class="container">
+  <div class="panel input-panel">
+    <h2>Configuration</h2>
+    <label>Grid Size</label>
+    <div class="radio-group">
+      <label onclick="this.querySelector('input').checked=true;calculate()"><input type="radio" name="gridSize" value="small"><span>Small Grid</span></label>
+      <label onclick="this.querySelector('input').checked=true;calculate()"><input type="radio" name="gridSize" value="large" checked><span>Large Grid</span></label>
+    </div>
+    <label>Design Preset</label>
+    <select id="preset"><option value="standard" selected>Standard / Balanced</option><option value="vtol">Short Takeoff / Low Speed</option><option value="fighter">Agile / Fighter</option></select>
+    <hr class="divider">
+    <h3>Fuselage</h3>
+    <div class="row"><div><label>Mass (kg)</label><input type="number" id="fuseMass" value="50000" min="100" step="1000"></div></div>
+    <div class="row">
+      <div><label>Length <span class="unit">(blocks)</span></label><input type="number" id="fuseL" value="20" min="2" max="200"></div>
+      <div><label>Width <span class="unit">(blocks)</span></label><input type="number" id="fuseW" value="3" min="1" max="50"></div>
+    </div>
+    <div class="row">
+      <div><label>Height <span class="unit">(blocks)</span></label><input type="number" id="fuseH" value="3" min="1" max="50"></div>
+      <div><label>Streamlining <span class="unit">(%)</span></label><input type="number" id="fuseStream" value="50" min="0" max="100"></div>
+    </div>
+    <hr class="divider">
+    <h3>Options</h3>
+    <div class="check-row"><input type="checkbox" id="includeFlaps"><label for="includeFlaps">Include Flaps (lower stall speed)</label></div>
+    <div class="check-row"><input type="checkbox" id="twinFin"><label for="twinFin">Twin Vertical Fins (better yaw for heavy aircraft)</label></div>
+    <hr class="divider">
+    <h3>Speed Targets <span class="unit">(m/s, optional)</span></h3>
+    <div class="row">
+      <div><label>Stall Speed</label><input type="number" id="targetStall" placeholder="auto" min="5" max="300" step="1"></div>
+      <div><label>Cruise Speed</label><input type="number" id="targetCruise" placeholder="auto" min="10" max="500" step="5"></div>
+    </div>
+    <div class="tip" style="margin-top:10px"><strong>Tip:</strong> Input fuselage mass WITHOUT wings/tail. Leave speeds empty for preset defaults.</div>
+  </div>
+  <div class="results" id="results"></div>
+</div>
+<script>
+// =====================================================================
+//  PAR PHYSICS ENGINE — calibrated to mod source (post-physics-overhaul)
+// =====================================================================
+// Mod overhaul summary (all applied in this calculator):
+//   • CL per-face HALVED — strip model now produces real 2D total lift
+//     (q·A·CL_real instead of previous 2× real). Every lifting surface
+//     produces real-airfoil-equivalent force.
+//   • FullSlopeCamberRad bumped 7.5°→14° so a 3-cell chord slope-LE wing
+//     matches NACA 2412 zero-lift shift (~2°) and Cm_ac (~-0.05).
+//   • Stall peak shifted 14°→16° with peak CL_strip_2D = 1.30 — matches
+//     real cambered airfoils; V_stall agrees with Cessna/A320 data.
+//   • Cm coupling uses actual couple arm (not chord) — recovers ~20%.
+//   • Mach tuck formula + linear onset — proper transonic feel.
+//   • DeflectionCamber decay rate 1.6→1.0 — restores elevator/flap/aileron
+//     authority to ~100% of real for typical 3-cell tail chords
+//     (control surfaces felt weak at 83% real after CL halving).
+//   • Oswald efficiency 0.80→0.85 — matches tapered modern wings; closes
+//     high-AR L/D gap by ~5% (airliner-class aircraft).
+//   • DeflectionCamberFactor 0.85→1.0 — upgraded from plain-flap to
+//     slotted-flap Glauert reference; flaps and control surfaces gain
+//     an additional ~17% effectiveness over prior plain-flap calibration.
+//
+// AR NOTE: The mod computes AR per surface group via flood-fill. Wings
+// don't connect through the fuselage, so each half-wing is a separate
+// group. AR = halfSpan^2 / halfWingArea = hsBlk / chordBlk.
+// =====================================================================
+const P={
+  rho:1.225, g:9.81,
+  lgCell:2.5, sgCell:0.5,
+  lgBlkMass:500, sgBlkMass:20,
+  lgRotor:1856, sgRotor:868.6,
+  lgHinge:1511, sgHinge:310.2,
+  oswaldE:0.85, skinCD:0.004, crossflowK:0.10,
+  camberBoostK:2.0,
+  stripCamberBoostK:0.95,
+  flapNearStallBoostK:2.0,
+  deflCamberF:1.0,
+  // CL per-face — halved from old regime. Strip sum (2×) = real 2D total CL.
+  // Peak at α=16° (stall onset). CL_strip_max = 2 × 0.65 = 1.30.
+  cA:[0,4,8,12,14,16,20,25,30,45,60,90],
+  cV:[0,.21,.425,.55,.60,.65,.55,.45,.375,.275,.15,0],
+  dA:[0,5,10,15,20,30,45,60,75,90],
+  dV:[.004,.006,.012,.04,.10,.32,.78,1.05,1.15,1.20],
+  // Camber constants: bumped 1.87× from old values so a 3-cell slope-LE wing
+  // gives NACA 2412-equivalent α_zero-lift ≈ -2° and Cm_ac ≈ -0.045.
+  camHalf:0.1222, camFull:0.2443, camRound:0.1954,
+  // Stall hysteresis — shifted +2° along with CL curve peak
+  stallOnsetDeg:16, stallRecoveryDeg:13,
+  // Cm coefficient (real thin-airfoil theory for slope-LE geometry)
+  cmCoeff:Math.PI*0.5, // Cm_camber = -π/2 × rowCamber
+  // Relative AoA for control surfaces behind a wing (from mod AeroConstants)
+  relativeAoAFraction:0.4,
+
+  // Prandtl AR correction: πAR/(2+√(4+π²AR²))
+  arCorr(ar){ let pa=Math.PI*ar; return pa/(2+Math.sqrt(4+pa*pa)); },
+
+  lerp(k,v,x){
+    if(x<=k[0])return v[0]; if(x>=k[k.length-1])return v[v.length-1];
+    let lo=0,hi=k.length-1;
+    while(hi-lo>1){let m=(lo+hi)>>1;k[m]<=x?lo=m:hi=m;}
+    let t=(x-k[lo])/(k[hi]-k[lo]);
+    return v[lo]+(v[hi]-v[lo])*t;
+  },
+  cl2d(aDeg){let a=Math.abs(aDeg),c=this.lerp(this.cA,this.cV,a);return aDeg>=0?c:-c;},
+  cd0(aDeg){return this.lerp(this.dA,this.dV,Math.abs(aDeg));},
+  effCamber(slopeRad,chordBlk){return chordBlk<1?0:slopeRad/(2*Math.sqrt(chordBlk));},
+
+  // Single-strip lift model: half-camber for effective alpha, 2× per-face CL curve.
+  // Matches AeroComputer strip path where top+bottom faces are paired.
+  cl2dStrip(aDeg){ return 2*this.cl2d(aDeg); },
+  // Net CL per planform area (single strip, half-camber offset) — real 2D total × AR correction
+  clEff(geoAlphaDeg,camRad,ar){
+    let halfCam=camRad*0.5;
+    let effA=geoAlphaDeg+halfCam*57.2958;
+    let c=this.cl2dStrip(effA);
+    let boost=Math.max(1+halfCam*this.stripCamberBoostK,0.5);
+    return c*boost*this.arCorr(ar);
+  },
+  // CLmax with optional near-stall flap boost (deflCamRad = flap DeflectionCamber)
+  clMaxEff(camRad,ar,deflCamRad){
+    let halfCam=camRad*0.5;
+    let c=this.cl2dStrip(this.stallOnsetDeg); // peak at new stall onset (16°)
+    let boost=Math.max(1+halfCam*this.stripCamberBoostK,0.5);
+    let flapBoost=1+Math.max(deflCamRad||0,0)*this.flapNearStallBoostK;
+    return c*boost*flapBoost*this.arCorr(ar);
+  },
+  // CD per planform (strip: 2× CD0 for both surfaces, real CDi = CL²/(π·AR·e))
+  // Previous 0.5× CDi compensation removed — no longer needed with real CL.
+  cdEff(geoAlphaDeg,camRad,ar){
+    let cl=this.clEff(geoAlphaDeg,camRad,ar);
+    let halfCam=camRad*0.5;
+    let effA=geoAlphaDeg+halfCam*57.2958;
+    let cd0=2*this.cd0(effA);
+    let cdi=cl*cl/(Math.PI*ar*this.oswaldE);
+    return cd0+cdi;
+  },
+  stallSpeed(W,S,camRad,ar,deflCamRad){
+    let cl=this.clMaxEff(camRad,ar,deflCamRad);
+    return cl>0?Math.sqrt(2*W/(this.rho*S*cl)):999;
+  },
+  formDragCD(L,W,H){
+    let a=W*H,d=2*Math.sqrt(a/Math.PI),fr=d>0.01?L/d:1;
+    return Math.max(Math.min(0.92/(1+0.14*Math.pow(fr,1.2)),0.92),0.08);
+  },
+  // Cm_ac from camber (thin-airfoil with PAR's slope-LE calibration)
+  cmAc(camRad){ return -this.cmCoeff * camRad; }
+};
+
+// =====================================================================
+//  CAMBER BLOCK RECOMMENDATION
+// =====================================================================
+// PAR row camber formula (BuildRowCamberFromSlices + BuildRowMomentData):
+//   rowCamber = (LeadingRad + TrailingRad) × 0.5 × camberMultiplier
+//   LeadingRad  = (signed camber of LE block)  × 1/√chordCells
+//   TrailingRad = (signed camber of TE block)  × -1/√chordCells   ← NEGATED
+//
+// So a TE block with "normal" positive slope contributes NEGATIVE camber
+// (reflex), while an "inverted" TE block (slope on underside) contributes
+// POSITIVE camber. Symmetric for LE.
+//
+// Only the first-cell at LE and first-cell at TE contribute — stacking
+// further slopes behind the first has no effect on row camber in PAR.
+// =====================================================================
+const SLOPE_BLOCKS=[
+  {key:"flat",      name:"Flat armor",           camberRad:0},
+  {key:"slope2x1tip", name:"Slope 2x1 Tip",      camberRad:0.0733},
+  {key:"halfslope", name:"Half Slope",           camberRad:0.1222},
+  {key:"roundslope", name:"Round Slope",         camberRad:0.1954},
+  {key:"fullslope", name:"Full Slope (45°)",     camberRad:0.2443},
+];
+
+// Returns the best block combination to achieve a target rowCamber.
+// Enumerates LE × TE × (normal/inverted) orientations — handles both positive
+// (wing-style) and negative (reflex-style) target camber correctly.
+// PAR formula: rowCamber = (LeadingRad + TrailingRad) × 0.5
+//   where LeadingRad  = leSignedCamber × edgeFrac
+//         TrailingRad = -teSignedCamber × edgeFrac  (NEGATED)
+// Maximum positive camber: LE normal (+) + TE inverted (-) → both terms positive.
+// Maximum negative camber: LE inverted (-) + TE normal (+) → both terms negative.
+// Stacking beyond the first block at each edge has no effect in PAR.
+function recommendCamberBlocks(targetCamberRad,chordCells,isTail){
+  const edgeFrac=1/Math.sqrt(Math.max(1,chordCells));
+  const candidates=[];
+
+  // Block orientation sign: +1 for standard, -1 for inverted. Flat has only 0.
+  const orientsFor=(b)=>b.camberRad===0
+    ?[{sign:0,label:""}]
+    :[{sign:+1,label:""},{sign:-1,label:" (inverted)"}];
+
+  for(const le of SLOPE_BLOCKS){
+    for(const leO of orientsFor(le)){
+      for(const te of SLOPE_BLOCKS){
+        for(const teO of orientsFor(te)){
+          const leadingRad=leO.sign*le.camberRad*edgeFrac;
+          const trailingRad=-teO.sign*te.camberRad*edgeFrac;
+          const achievedCamber=(leadingRad+trailingRad)*0.5;
+          const complexity=(le.camberRad>0?1:0)+(te.camberRad>0?1:0);
+          candidates.push({
+            leBlock:le.camberRad===0?"Flat armor":le.name+leO.label,
+            teBlock:te.camberRad===0?"Flat armor":te.name+teO.label,
+            leInverted:leO.sign<0,
+            teInverted:teO.sign<0,
+            achievedCamber:achievedCamber,
+            complexity:complexity
+          });
+        }
+      }
+    }
+  }
+
+  // Pick best: minimize error, tie-break by lower complexity.
+  let best=null;
+  for(const c of candidates){
+    c.error=Math.abs(c.achievedCamber-targetCamberRad);
+    if(!best||c.error<best.error-0.002||
+       (Math.abs(c.error-best.error)<0.002&&c.complexity<best.complexity)){
+      best=c;
+    }
+  }
+
+  // Build-hint is purely descriptive — uses isTail context for "wing"/"tail" wording.
+  best.buildHint=describeBuild(best,isTail);
+  return best;
+}
+
+function describeBuild(rec,isTail){
+  const surface=isTail?"Tail":"Wing";
+  if(rec.leBlock==="Flat armor"&&rec.teBlock==="Flat armor"){
+    return `${surface} fully flat (symmetric — no camber effect).`;
+  }
+  const orientWord=(inverted)=>inverted
+    ?"INVERTED (slope face on UNDERSIDE, flat face on top)"
+    :"standard (slope face on top, pointy tip in natural flight-forward direction)";
+  const describe=(block,inverted,edge)=>block==="Flat armor"
+    ?`${surface} ${edge}: Flat armor.`
+    :`${surface} ${edge}: ${block.replace(/ \(inverted\)$/,"")}, ${orientWord(inverted)}.`;
+  return describe(rec.leBlock,rec.leInverted,"LE")+" "+describe(rec.teBlock,rec.teInverted,"TE");
+}
+
+// Target wing camber for neutral vertical speed at α_aircraft=0° at cruise speed.
+// At α_geo=0: α_eff = 0.5 × rowCamber. We want CL(α_eff) × arCorr = W/(qS).
+function computeTargetWingCamber(W,S,rho,cruiseSpd,aAR){
+  const q=0.5*rho*cruiseSpd*cruiseSpd;
+  const clNeeded=W/(q*S);
+  const clStripNeeded=clNeeded/P.arCorr(aAR);
+  // Find α_eff (deg) such that cl2dStrip(α_eff) = clStripNeeded (inverse lookup)
+  let alphaEffDeg=0;
+  for(let a=0;a<=P.stallOnsetDeg;a+=0.05){
+    if(P.cl2dStrip(a)>=clStripNeeded){alphaEffDeg=a;break;}
+  }
+  // camber_rad = 2 × alphaEff_rad
+  return 2*alphaEffDeg*Math.PI/180;
+}
+
+const PRESETS={
+  standard:{
+    name:"Standard / Balanced",
+    desc:"Stable, efficient all-purpose aircraft",
+    defaultStall:50, defaultCruise:85, targetAR:6,
+    hTailFrac:0.22,
+    aileronSpanFrac:0.35,  // fraction of half-span
+    flapSpanFrac:0.45,
+    ctrlChordFrac:0.28,    // fraction of total chord
+    elevChordFrac:0.35, rudderChordFrac:0.35,
+    camberType:"half",
+  },
+  vtol:{
+    name:"Short Takeoff / Low Speed",
+    desc:"Large wings for low stall speed, STOL capable",
+    defaultStall:42, defaultCruise:65, targetAR:5,
+    hTailFrac:0.18,
+    aileronSpanFrac:0.30, flapSpanFrac:0.50,
+    ctrlChordFrac:0.30,
+    elevChordFrac:0.40, rudderChordFrac:0.40,
+    camberType:"full",
+  },
+  fighter:{
+    name:"Agile / Fighter",
+    desc:"Small wings, high speed, aggressive handling",
+    defaultStall:70, defaultCruise:120, targetAR:4,
+    hTailFrac:0.20,
+    aileronSpanFrac:0.40, flapSpanFrac:0.35,
+    ctrlChordFrac:0.25,
+    elevChordFrac:0.35, rudderChordFrac:0.40,
+    camberType:"half",
+  }
+};
+
+// =====================================================================
+//  MAIN CALCULATOR
+// =====================================================================
+function calculate(){
+  const isSmall=document.querySelector('input[name=gridSize]:checked').value==='small';
+  const cell=isSmall?P.sgCell:P.lgCell;
+  const cellA=cell*cell;
+  const bm=isSmall?P.sgBlkMass:P.lgBlkMass;
+  const mechPer=2*(isSmall?P.sgRotor:P.lgRotor)+2*(isSmall?P.sgHinge:P.lgHinge);
+
+  const pr=PRESETS[document.getElementById('preset').value];
+  const fm=Math.max(100,parseFloat(document.getElementById('fuseMass').value)||10000);
+  const fL=Math.max(2,parseFloat(document.getElementById('fuseL').value)||10);
+  const fW=Math.max(1,parseFloat(document.getElementById('fuseW').value)||3);
+  const fH=Math.max(1,parseFloat(document.getElementById('fuseH').value)||3);
+  const fStr=(parseFloat(document.getElementById('fuseStream').value)||50)/100;
+  const streamF=1.0-0.9*fStr;
+  const flaps=document.getElementById('includeFlaps').checked;
+  const twinFin=document.getElementById('twinFin').checked;
+  const tgtStall=parseFloat(document.getElementById('targetStall').value)||pr.defaultStall;
+  const tgtCruise=parseFloat(document.getElementById('targetCruise').value)||0;
+
+  const fLm=fL*cell, fWm=fW*cell, fHm=fH*cell;
+  const fFrontal=fWm*fHm;
+  const tailArm=Math.max(fLm*0.55,cell*3);
+  const ar0=pr.targetAR;
+  const camBase={none:0,half:P.camHalf,full:P.camFull,round:P.camRound}[pr.camberType];
+
+  // Flap CLmax boost: 30 deg deflection with Glauert chord-ratio effectiveness.
+  // Flap chord ratio ≈ ctrlChordFrac of total chord. Glauert: τ = base × √(cf/c).
+  const flapChordRatio=pr.ctrlChordFrac;
+  const flapGlauertFactor=P.deflCamberF*Math.sqrt(flapChordRatio);
+  const flapDeflCam=0.524*flapGlauertFactor; // 30 deg = 0.524 rad × Glauert factor
+  const flapClBoost=Math.max(1+flapDeflCam*P.flapNearStallBoostK,0.5);
+
+  // ---- Iterative sizing ----
+  // Control surfaces are FLUSH within the wing/tail chord (subgrids at trailing edge).
+  // Total chord = structural (main grid) + control surface (subgrid).
+  // AR = hsBlk / chordBlk (half-wing, matching mod surface group behavior).
+  // Carry state across iterations so each pass sizes the wing against the
+  // ACTUAL recommended-block camber, not the preset. Wing sizing and camber
+  // recommendation are mutually dependent (camber needs chord; chord needs
+  // CLmax from camber), so we iterate them together to convergence.
+  let tm=fm, R={}, arPhys=ar0;
+  let iterChordBlk=Math.max(2,Math.round(Math.sqrt(ar0))); // initial chord estimate
+  let iterSw=Math.max(5,tm/500);                           // rough Sw seed for target-camber calc
+  let iterWingBlocks=null;
+  let prevTm=0; // for convergence early-exit
+  for(let it=0;it<12;it++){
+    const W=tm*P.g;
+
+    // Step 1: compute the target wing camber for neutral V_z at α=0° cruise,
+    // using the CURRENT geometry estimate. Step 2: pick the closest block
+    // combination at this chord. Step 3: use the ACHIEVED camber for CLmax
+    // sizing below — so the wing is sized against what the user will actually build.
+    // Use the SAME cruise-speed reference the post-iteration code will use, so
+    // camber target is consistent with the displayed cruise speed.
+    const cruiseSpdForCam=tgtCruise>0?tgtCruise:Math.max(tgtStall*1.6,pr.defaultCruise);
+    const targetCamIter=computeTargetWingCamber(W,iterSw,P.rho,cruiseSpdForCam,arPhys);
+    iterWingBlocks=recommendCamberBlocks(targetCamIter,iterChordBlk,false);
+    let camEst=iterWingBlocks.achievedCamber;
+
+    // Flap area fraction for CLmax boost weighting
+    let flapAreaFrac=flaps?pr.flapSpanFrac*pr.ctrlChordFrac:0;
+    let flapWeightedBoost=flaps?1+(flapClBoost-1)*flapAreaFrac:1;
+    let clMaxEst=P.clMaxEff(camEst,arPhys)*flapWeightedBoost;
+
+    // Wing area from stall speed (total planform including ctrl surfaces)
+    let SwStall=2*W/(P.rho*tgtStall*tgtStall*clMaxEst);
+
+    // Wing area from cruise speed
+    let SwCruise=0;
+    if(tgtCruise>0){
+      let maxCrAoA=Math.max(P.stallOnsetDeg-camEst*0.5*57.2958-3, 2); // strip half-camber
+      let clCr=P.clEff(maxCrAoA,camEst,arPhys);
+      if(clCr>0.01) SwCruise=2*W/(P.rho*tgtCruise*tgtCruise*clCr);
+    }
+    let Sw=Math.max(SwStall,SwCruise);
+
+    // L/D floor: if cruise L/D would be below 3, increase wing area.
+    // Larger wings → lower cruise AoA → lower profile drag → better L/D.
+    // Estimate non-wing drag (form + skin) to check L/D before quantization.
+    {
+      let crSpd=tgtCruise>0?tgtCruise:Math.max(Math.sqrt(2*W/(P.rho*Sw*Math.max(clMaxEst,0.3)))*1.6,pr.defaultCruise);
+      let qEst=0.5*P.rho*crSpd*crSpd;
+      // Rough non-wing drag: form + skin (doesn't depend on wing area)
+      let eqF=isSmall?0.2:0.35;
+      let gFront=fFrontal*(1+eqF)+6*cellA; // fuselage + ~tail/fin edges
+      let gLen=fLm+fLm*0.55+4*cell;
+      let gDia=2*Math.sqrt(gFront/Math.PI);
+      let gFR=gDia>0.01?gLen/gDia:1;
+      let gCD=Math.max(0.1,Math.min(0.92,0.92/(1+0.14*gFR)));
+      let dNonWing=qEst*gFront*gCD*streamF + qEst*2*(fWm+fHm)*fLm*P.skinCD*0.6;
+      // Iteratively increase Sw if L/D < 3
+      for(let li=0;li<8;li++){
+        let clN=W/(qEst*Sw);
+        let aEst=P.clEff(2,camEst,arPhys)>0.01 ? clN / (P.clEff(1,camEst,arPhys)/1) : 4;
+        // Find alpha for this CL
+        let aSrch=null;
+        for(let ad=0.5;ad<=P.stallOnsetDeg;ad+=0.5){
+          if(P.clEff(ad,camEst,arPhys)>=clN){aSrch=ad;break;}
+        }
+        if(aSrch===null) break; // past stall, can't help
+        let cdEst=P.cdEff(aSrch,camEst,arPhys);
+        let dWingEst=qEst*Sw*cdEst;
+        // Tail/fin skin drag scales with wing area
+        let htA=Sw*pr.hTailFrac;
+        let dTailEst=qEst*htA*(2*P.skinCD+0.002) + qEst*4*cellA*2*P.skinCD;
+        let dTot=dWingEst+dNonWing+dTailEst;
+        let ldEst=W/dTot;
+        if(ldEst>=3.0) break;
+        Sw*=1.15; // grow 15% per iteration
+      }
+    }
+
+    // Quantize wing: total chord includes control surfaces flush at trailing edge
+    let spanM=Math.sqrt(ar0*Sw);
+    let chordM=Sw/spanM;
+    let chordBlk=Math.max(2,Math.ceil(chordM/cell));
+    let hsBlk=Math.max(3,Math.ceil((spanM/2-fWm/2)/cell));
+    let wTotalBlk=2*hsBlk*chordBlk; // total wing blocks per side (struct + ctrl)
+
+    // Cap wing blocks
+    let maxWBlk=Math.max(40,Math.round(fm/bm*4));
+    if(wTotalBlk>maxWBlk){
+      let s=Math.sqrt(maxWBlk/wTotalBlk);
+      hsBlk=Math.max(3,Math.round(hsBlk*s));
+      chordBlk=Math.max(2,Math.round(chordBlk*s));
+      wTotalBlk=2*hsBlk*chordBlk;
+    }
+
+    let aSpan=2*hsBlk*cell+fWm;
+    let aChord=chordBlk*cell;
+    let aSw=wTotalBlk*cellA; // total wing planform area
+
+    // AR = half-wing span / chord (mod computes per surface group via flood-fill;
+    // left and right wings are separate groups that don't cross the fuselage)
+    let aAR=Math.max(0.5,Math.min(20, hsBlk/chordBlk));
+    arPhys=aAR;
+    // Re-query block recommendation now that we have the final quantized chord for
+    // THIS iteration — gives a tighter camber estimate than the pre-iteration guess.
+    const targetCamFinal=computeTargetWingCamber(W,aSw,P.rho,cruiseSpdForCam,arPhys);
+    iterWingBlocks=recommendCamberBlocks(targetCamFinal,chordBlk,false);
+    let camRad=iterWingBlocks.achievedCamber;
+
+    // Control surfaces flush within wing chord
+    let ctrlCBlk=Math.max(1,Math.round(chordBlk*pr.ctrlChordFrac));
+    let structCBlk=chordBlk-ctrlCBlk; // main grid chord
+    if(structCBlk<1){structCBlk=1;ctrlCBlk=chordBlk-1;}
+
+    let ailSBlk=Math.max(1,Math.round(hsBlk*pr.aileronSpanFrac));
+    let ailCBlk=ctrlCBlk;
+    let ailEach=ailSBlk*ailCBlk, ailTot=2*ailEach;
+
+    let flSBlk=0,flCBlk=0,flTot=0;
+    if(flaps){
+      flSBlk=Math.max(1,Math.round(hsBlk*pr.flapSpanFrac));
+      flCBlk=ctrlCBlk;
+      flTot=2*flSBlk*flCBlk;
+    }
+
+    // Structural wing blocks = total wing - control surfaces
+    // (filler blocks where ctrl surfaces sit on subgrids)
+    let wStructBlk=wTotalBlk; // all blocks are main grid (ctrl surfaces are separate subgrids)
+
+    // H-tail: total chord includes elevator (flush)
+    let hTA=aSw*pr.hTailFrac;
+    let htTargetAR=4;
+    let htSpanM=Math.sqrt(htTargetAR*hTA), htChordM=hTA/htSpanM;
+    let htHsBlk=Math.max(2,Math.round(htSpanM/2/cell));
+    let htTotalCBlk=Math.max(2,Math.round(htChordM/cell));
+    let elCBlk=Math.max(1,Math.round(htTotalCBlk*pr.elevChordFrac));
+    let htStructCBlk=Math.max(1,htTotalCBlk-elCBlk);
+    let htBlk=2*htHsBlk*htTotalCBlk; // total H-tail blocks (struct + elevator space)
+    let aHTa=htBlk*cellA;
+    // H-tail AR (half-tail, same as wing logic)
+    let htAR=Math.max(0.5,Math.min(20, htHsBlk/htTotalCBlk));
+    let elSBlk=htHsBlk*2; // elevator spans full tail
+    let elBlk=elSBlk*elCBlk;
+
+    // Vertical fin: sized from target sideslip in 20° bank
+    // Reverse: S_fin = W*sin(bank) / (q_cruise * a_fin * beta_target)
+    // a_fin = 2 * 6.02 * finAR/(finAR+2), assume finAR≈2 initially → a_fin≈6.02
+    let finCount=twinFin?2:1;
+    let betaTarget=8*Math.PI/180; // 8° = "GOOD" threshold
+    let clMaxEst2=P.clMaxEff(camRad,aAR)*flapWeightedBoost;
+    let stallEst=Math.sqrt(2*W/(P.rho*aSw*Math.max(clMaxEst2,0.3)));
+    let cruiseEst=tgtCruise>0?tgtCruise:Math.max(stallEst*1.6,pr.defaultCruise);
+    let qCrEst=0.5*P.rho*cruiseEst*cruiseEst;
+    let finARguess=2.0; // sqrt(2*A)/sqrt(A/2) = 2
+    let aFinGuess=2*6.02*finARguess/(finARguess+2); // ≈6.02
+    let sFinReq=W*Math.sin(20*Math.PI/180)/(qCrEst*aFinGuess*betaTarget);
+    let sFinPer=Math.max(sFinReq/finCount, 4*cellA); // min 2×2 blocks
+    let vfHM=Math.sqrt(2*sFinPer), vfCM=sFinPer/vfHM; // AR≈2 shape
+    let vfHBlk=Math.max(2,Math.round(vfHM/cell));
+    let vfTotalCBlk=Math.max(2,Math.round(vfCM/cell));
+    let rdCBlk=Math.max(1,Math.round(vfTotalCBlk*pr.rudderChordFrac));
+    let vfStructCBlk=Math.max(1,vfTotalCBlk-rdCBlk);
+    let vfBlkSingle=vfHBlk*vfTotalCBlk;
+    let vfBlk=vfBlkSingle*finCount;
+    let aVFa=vfBlk*cellA;
+    let rdHBlk=vfHBlk;
+    let rdBlkSingle=rdHBlk*rdCBlk;
+    let rdBlk=rdBlkSingle*finCount;
+
+    // Number of control surface subgrids: 2 ail + 1 elev + fin(s) rudder + (2 flaps)
+    let nCtrl=2+1+finCount+(flaps?2:0);
+    let mechW=nCtrl*mechPer;
+
+    // Block count: wing (main grid) + tail struct + fin struct + subgrid ctrl surfaces
+    let sBlk=wStructBlk+htBlk+vfBlk+ailTot+elBlk+rdBlk+flTot;
+    let sW=sBlk*bm;
+    tm=fm+sW+mechW;
+
+    R={cell,cellA,bm,isSmall,mechPer,fm,tm,sW,mechW,sBlk,
+       fLm,fWm,fHm,fL,fW,fH,fFrontal,streamF,tailArm,
+       wTotalBlk,wStructBlk,hsBlk,chordBlk,structCBlk,ctrlCBlk,aSpan,aChord,aSw,aAR,camRad,camBase,camType:pr.camberType,
+       htBlk,htHsBlk,htTotalCBlk,htStructCBlk,htAR,aHTa,
+       vfBlk,vfBlkSingle,vfHBlk,vfTotalCBlk,vfStructCBlk,aVFa,finCount,twinFin,
+       ailEach,ailTot,ailSBlk,ailCBlk,
+       elBlk,elSBlk,elCBlk,
+       rdBlk,rdBlkSingle,rdHBlk,rdCBlk,
+       flTot,flSBlk,flCBlk,flaps,nCtrl,
+       pr,tgtStall,flapWeightedBoost};
+
+    // Feed this iteration's geometry back to the top of the loop for next pass's
+    // target-camber and block-recommendation calls.
+    iterChordBlk=chordBlk;
+    iterSw=aSw;
+
+    // Convergence early-exit: break when mass estimate stabilizes (< 5 kg change)
+    // AND wing chord block count has settled. Typically converges in 3-5 passes.
+    if(it>=2&&Math.abs(tm-prevTm)<5&&iterChordBlk===chordBlk) break;
+    prevTm=tm;
+  }
+  // Save the final recommendation from the converged iteration
+  R.wingBlocks=iterWingBlocks;
+  R.wingCamberAchievedRad=iterWingBlocks?iterWingBlocks.achievedCamber:R.camRad;
+  R.targetWingCamberRad=computeTargetWingCamber(R.tm*P.g,R.aSw,P.rho,
+    tgtCruise>0?tgtCruise:pr.defaultCruise,R.aAR);
+
+  // ---- Performance ----
+  const W=R.tm*P.g, rho=P.rho;
+  const totalLA=R.aSw; // total wing planform (ctrl surfaces are flush within)
+  R.totalLiftArea=totalLA;
+  R.clMax=P.clMaxEff(R.camRad,R.aAR)*R.flapWeightedBoost;
+  R.stallSpd=Math.sqrt(2*W/(rho*totalLA*R.clMax));
+  R.stallGeoA=P.stallOnsetDeg-R.camRad*0.5*57.2958; // strip half-camber: stall at 16° eff = geo + 0.5*cam
+  R.tgtStall=tgtStall;
+  R.tgtCruise=tgtCruise;
+
+  if(R.flaps){
+    let clMaxClean=P.clMaxEff(R.camRad,R.aAR);
+    R.stallSpdClean=Math.sqrt(2*W/(rho*totalLA*clMaxClean));
+  }
+
+  let cruiseSpd=tgtCruise>0?tgtCruise:Math.max(R.stallSpd*1.6,pr.defaultCruise);
+  R.cruiseSpd=cruiseSpd;
+  let qCr=0.5*rho*cruiseSpd*cruiseSpd;
+  let clNeed=W/(qCr*totalLA);
+  R.clCruise=clNeed;
+
+  // Wing camber and block recommendation are already computed inside the main
+  // iteration (so wing area is sized against the ACHIEVED CLmax, not the preset's).
+  // R.camRad, R.wingBlocks, R.wingCamberAchievedRad, and R.targetWingCamberRad are
+  // already populated. Just compute cruise AoA with the final camber.
+  R.cruiseAoA=findAlpha(clNeed,R.camRad,R.aAR);
+
+  // Warnings
+  R.warnings=[];
+  if(tgtCruise>0&&tgtCruise<=tgtStall) R.warnings.push('Cruise speed must be faster than stall speed!');
+  if(R.cruiseAoA===null) R.warnings.push('Cruise speed too slow — would require AoA beyond stall. Increase cruise speed or add more wing.');
+  else if(R.cruiseAoA>R.stallGeoA-2) R.warnings.push('Cruise AoA ('+R.cruiseAoA.toFixed(1)+'&deg;) is dangerously close to stall ('+R.stallGeoA.toFixed(1)+'&deg;). Increase cruise speed or wing area.');
+  if(R.stallSpd-tgtStall>3&&tgtStall>0) R.warnings.push('Stall speed '+R.stallSpd.toFixed(1)+' m/s exceeds target '+tgtStall+' m/s by '+(R.stallSpd-tgtStall).toFixed(1)+' m/s. Enlarge the wing, add camber, or raise target stall. (Lower stall than target is fine and not warned.)');
+
+  // ---- Grid-level form drag (matches mod: SurfaceDetector + AeroComputer) ----
+  // The mod projects the ENTIRE grid's non-lifting cells onto each axis to get
+  // silhouette area, then applies fineness-ratio form drag.  Lifting cells
+  // (wing planform) are excluded — they have their own CL/CD model.
+  //
+  // Estimate the forward (Z-axis) projected area of all non-lifting structure:
+  //  - Fuselage frontal: fW × fH blocks
+  //  - H-tail structure (non-lifting edges/structure): htHsBlk × 1 block thick per side
+  //  - V-fin structure: vfHBlk × 1 block thick per fin
+  //  - Equipment inside fuselage projecting beyond: ~20-40% of fuselage frontal
+  let equipFrac=isSmall?0.2:0.35; // large grid has bulkier equipment
+  let htEdgeArea=2*R.htHsBlk*1*cellA; // H-tail leading edge projection (1 block thick, both sides)
+  let vfEdgeArea=R.finCount*R.vfHBlk*1*cellA; // V-fin leading edge
+  let gridFrontal=(fFrontal*(1+equipFrac)+htEdgeArea+vfEdgeArea);
+  // Fineness ratio from full grid extent and projected area
+  let gridLen=fLm+tailArm+R.htTotalCBlk*cell; // total grid length estimate
+  let gridDiam=2*Math.sqrt(gridFrontal/Math.PI);
+  let gridFR=gridDiam>0.01?gridLen/gridDiam:1;
+  let gridFormCD=Math.max(0.1,Math.min(0.92,0.92/(1+0.14*gridFR)));
+  // Streamlining: fuselage portion uses user streamlining, tail/fin edges are slopes (~0.4)
+  let gridStream=(fFrontal*(1+equipFrac)*R.streamF + (htEdgeArea+vfEdgeArea)*0.4) / gridFrontal;
+  R.gridFrontal=gridFrontal;
+  R.gridFormCD=gridFormCD;
+  R.gridStream=gridStream;
+
+  // ---- Fuselage wetted area skin friction (matches mod: non-lifting panel skin friction) ----
+  // The mod applies skinCD=0.004 to every non-lifting face, with 0.2× wake reduction
+  // on rear-facing panels. The fuselage has 4 long faces (top, bottom, left, right).
+  // Front and rear faces are covered by form drag. Approximate effective wetted area:
+  let fuseWettedArea=2*(fWm+fHm)*fLm; // perimeter × length (4 long sides)
+  let wakeReduction=0.6; // average: front-facing panels get 1.0, rear get 0.2
+  R.dFuseSkin=0; // computed per-speed below
+
+  // Drag at cruise
+  let cdW=R.cruiseAoA!==null?P.cdEff(R.cruiseAoA,R.camRad,R.aAR):0.05;
+  R.dWing=qCr*totalLA*cdW;
+  R.dForm=qCr*gridFrontal*gridFormCD*gridStream;
+  R.dFuseSkin=qCr*fuseWettedArea*P.skinCD*wakeReduction;
+  // H-tail at cruise produces trim downforce — estimate ~2 deg AoA skin friction + small induced
+  let htCdCruise=2*P.skinCD + 0.002; // skin friction both faces + small trim induced
+  R.dTail=qCr*R.aHTa*htCdCruise;
+  R.dFin=qCr*R.aVFa*2*P.skinCD;
+  R.dTot=R.dWing+R.dForm+R.dFuseSkin+R.dTail+R.dFin;
+  R.thrust=R.dTot;
+  R.power=R.thrust*R.cruiseSpd;
+  R.ldCr=W/R.dTot;
+
+  // Speed scan — uses totalLA consistently
+  R.bestLD=0;R.bestLDSpd=0;R.spdData=[];
+  let mx=Math.min(cruiseSpd*2,350);
+  for(let v=Math.max(R.stallSpd*0.7,5);v<=mx;v+=1){
+    let q=0.5*rho*v*v;
+    let clN=W/(q*totalLA);
+    let a=findAlpha(clN,R.camRad,R.aAR);
+    if(a===null||a>P.stallOnsetDeg+2){R.spdData.push({v,d:NaN,ld:NaN,a:NaN});continue;}
+    let cd=P.cdEff(a,R.camRad,R.aAR);
+    let dt=q*totalLA*cd+q*gridFrontal*gridFormCD*gridStream+q*fuseWettedArea*P.skinCD*wakeReduction+q*R.aHTa*htCdCruise+q*R.aVFa*2*P.skinCD;
+    let ld=W/dt;
+    if(ld>R.bestLD){R.bestLD=ld;R.bestLDSpd=v;}
+    R.spdData.push({v,d:dt,ld,a});
+  }
+
+  R.wLoad=R.tm/R.aSw;
+  let nMax=R.clMax/Math.max(R.clCruise,0.01);
+  R.maxBank=Math.acos(Math.min(1/nMax,1))*57.2958;
+  R.clAbove=isSmall?5:3;
+  R.clFin=isSmall?10:6;
+
+  // ---- Downwash on tail (matches mod: AeroComputer.cs:369) ----
+  // epsilon = 2*CL / (pi * e * AR), with distance decay from mod constants
+  {
+    let wingCL=R.cruiseAoA!==null?R.clCruise:0;
+    let epsilon=2*wingCL/(Math.PI*P.oswaldE*R.aAR);
+    // Mod constants: NearFieldDist=2m, DecayLength=7m
+    let farDist=Math.max(R.tailArm-2.0, 0);
+    let distDecay=1/(1+farDist/7.0);
+    R.downwashRad=epsilon*distDecay;
+    R.downwashDeg=R.downwashRad*57.2958;
+    // Tail effective AoA at cruise = wing AoA - downwash
+    R.tailEffAoA=R.cruiseAoA!==null?Math.max(R.cruiseAoA-R.downwashDeg,0):0;
+  }
+
+  // ---- Stability volume coefficients ----
+  // Horizontal tail volume: Vh = S_ht * l_t / (S_w * c_w)
+  R.Vh=R.aHTa*R.tailArm/(totalLA*R.aChord);
+  // Vertical tail volume: Vv = S_v * l_v / (S_w * b)
+  let vFinArea=R.aVFa; // total fin area (both fins if twin)
+  R.Vv=vFinArea*R.tailArm/(totalLA*R.aSpan);
+
+  // ---- Neutral Point + CoG placement (longitudinal stability) ----
+  // Wing AC at 25% MAC. Tail shifts NP aft by a term ~ Vh × (1 - dε/dα) × (a_t/a_w).
+  // Assumes equal 2D lift slope for wing and tail (reasonable for PAR's uniform CL curve).
+  // dε/dα estimated from the downwash computation above (per-rad).
+  {
+    let wingCLa=2*Math.PI*P.arCorr(R.aAR); // 2π (strip sum) × AR correction
+    let tailAR=R.htHsBlk/Math.max(1,R.htTotalCBlk);
+    let tailCLa=2*Math.PI*P.arCorr(tailAR);
+    // dε/dα at the tail location — from downwash formula ε = 2CL/(πeAR_wing),
+    // so dε/dα = 2(dCL/dα)/(πeAR) × decay
+    let farDist=Math.max(R.tailArm-2.0, 0);
+    let distDecay=1/(1+farDist/7.0);
+    let dEpsDAlpha=2*wingCLa/(Math.PI*P.oswaldE*R.aAR) * distDecay;
+    let downwashFactor=Math.max(0.1,1-dEpsDAlpha);
+    // NP shift from wing AC (positive = aft), normalized by wing chord
+    let npShiftFracC=(R.aHTa/totalLA)*(R.tailArm/R.aChord)*(tailCLa/wingCLa)*downwashFactor;
+    R.npFromLE=0.25+npShiftFracC; // neutral point as fraction of MAC from LE
+    // Recommended CoG: 10-15% static margin gives stable but responsive aircraft
+    R.cgRecommendedMin=Math.max(0.15, R.npFromLE-0.20); // 20% SM upper bound
+    R.cgRecommendedMax=Math.max(0.20, R.npFromLE-0.10); // 10% SM lower bound
+    R.cgOptimal=(R.cgRecommendedMin+R.cgRecommendedMax)/2;
+    // Absolute CoG position from wing LE (metres)
+    R.cgOptimalM=R.cgOptimal*R.aChord;
+    R.npFromLEm=R.npFromLE*R.aChord;
+    R.staticMarginOptimal=R.npFromLE-R.cgOptimal;
+  }
+
+  // ---- Pitch trim analysis (at cruise, CoG = optimal, tail neutral camber) ----
+  // Net Cm about CoG = Cm_ac_wing + CL_wing × (x_CG - x_AC)/c + tail contribution
+  //   tail Cm = -CL_tail × (S_t/S_w) × (L_t/c_w)
+  //   CL_tail sign: positive (uplift) → pitch-DOWN moment about CoG
+  // If net Cm ≠ 0, aircraft doesn't trim — needs elevator deflection OR tail camber.
+  {
+    // Wing contributions to net Cm about CoG:
+    //   cmAcWing = -π/2 × camber  (nose-down from positive camber)
+    //   wingLiftCm = CL × (x_CoG - x_AC)/c
+    //     Positive when CoG aft of AC → wing lift acts FORWARD of CoG → pitch-UP
+    //     Negative when CoG fwd of AC → wing lift acts AFT of CoG → pitch-DOWN
+    const cmAcWing=P.cmAc(R.camRad);
+    const clCruise=R.clCruise;
+    const wingLiftCm=clCruise*(R.cgOptimal-0.25);
+
+    // Tail geometry for moment arm calculations
+    const tailARfromChord=R.htHsBlk/Math.max(1,R.htTotalCBlk);
+    const tailArmRatio=R.tailArm/R.aChord;
+    const tailAreaRatio=R.aHTa/totalLA;
+    const tailCLslope=2*Math.PI*P.arCorr(tailARfromChord); // per rad of α_eff
+    // Tail's geometric AoA at cruise = aircraft AoA - downwash
+    const tailAlphaGeoRad=R.cruiseAoA!==null?Math.max(0,R.cruiseAoA-R.downwashDeg)/57.2958:0;
+
+    // Solve for the tail CL (and thus camber) that zeroes net Cm about CoG.
+    //   netCm = cmAcWing + wingLiftCm - CL_tail × tailAreaRatio × tailArmRatio = 0
+    //   → CL_tail = (cmAcWing + wingLiftCm) / (tailAreaRatio × tailArmRatio)
+    const denom=tailAreaRatio*tailArmRatio;
+    const tailCLforTrim=denom>0.01?(cmAcWing+wingLiftCm)/denom:0;
+    // With strip-model α_eff = α_geo + 0.5·camber:
+    //   CL_tail = slope × (α_geo + 0.5·camber)
+    //   → camber_needed = 2 × (CL_tail / slope - α_geo)
+    const tailHalfCamNeeded=tailCLslope>0.01?(tailCLforTrim/tailCLslope)-tailAlphaGeoRad:0;
+    R.tailCamberForTrim=tailHalfCamNeeded*2;
+    R.tailCamberForTrimDeg=R.tailCamberForTrim*57.2958;
+
+    // Recommend the closest block combination (works for +/- targets).
+    R.tailBlocks=recommendCamberBlocks(R.tailCamberForTrim,R.htTotalCBlk,true);
+    R.tailCamberAchievedRad=R.tailBlocks.achievedCamber;
+    R.tailCamberAchievedDeg=R.tailCamberAchievedRad*57.2958;
+
+    // Report the moment balance the user will actually experience with those blocks.
+    const tailEffAlphaRad=tailAlphaGeoRad+0.5*R.tailCamberAchievedRad;
+    const tailCLActual=tailCLslope*tailEffAlphaRad;
+    R.cmAcWing=cmAcWing;
+    R.cmWingLift=wingLiftCm;
+    R.tailCLActual=tailCLActual;
+    R.cmTailAchieved=-tailCLActual*tailAreaRatio*tailArmRatio;
+    R.cmNetAchieved=cmAcWing+wingLiftCm+R.cmTailAchieved;
+  }
+
+  // ---- Yaw stability: equilibrium sideslip in 20 deg bank ----
+  // Lateral weight component = W * sin(bank)
+  // Restoring side forces:
+  //   Fin:      q * S_fin * CL_alpha_fin * beta  (lifting surface, linear in beta)
+  //   Fuselage: q * S_side * CrossflowK * beta * (1-beta)  (crossflow, ~linear at small beta)
+  // CL_alpha for fin: from CL table slope (0-4 deg): 0.42/4 = 0.105/deg = 6.02/rad
+  // Apply AR correction and two-face: a_fin = 2 * 6.02 * finAR/(finAR+2) per rad
+  // Equilibrium: W*sin(bank) = q * (S_fin * a_fin + S_side * CrossflowK) * beta
+  {
+    let bankRad=20*Math.PI/180;
+    let finAR=R.vfHBlk/R.vfTotalCBlk; // fin half-AR (single fin)
+    let a2d=6.02; // CL slope per rad from table
+    let aFinPerRad=2*a2d*finAR/(finAR+2); // both faces, AR corrected
+    let qCruise=0.5*P.rho*R.cruiseSpd*R.cruiseSpd;
+    let lateralW=W*Math.sin(bankRad);
+    // Fuselage side area for crossflow (estimated from fuselage dimensions)
+    let fuseSideArea=fLm*fHm; // length × height
+    let crossflowForcePerRad=fuseSideArea*P.crossflowK; // at small beta, (1-|r|)≈1
+    let totalSideForcePerRad=vFinArea*aFinPerRad+crossflowForcePerRad;
+    let betaRad=qCruise*totalSideForcePerRad>0
+      ? lateralW/(qCruise*totalSideForcePerRad) : 999;
+    R.sideslipDeg=betaRad*57.2958;
+    R.finAR=finAR;
+    R.finCLa=aFinPerRad;
+    R.crossflowContrib=crossflowForcePerRad/(totalSideForcePerRad>0?totalSideForcePerRad:1)*100;
+  }
+
+  // ---- Roll authority ----
+  // Aileron moment = q * S_ail * CL(15 deg deflection) * arm
+  // With relative AoA (40% effective): effective deflection = 15 * 0.4 = 6 deg
+  // CL at 6 deg ≈ 0.63 (from table), AR corrected, two faces
+  {
+    let ailDeflEff=6; // 15 deg * 0.4 relative AoA fraction
+    let ailCL=P.clEff(ailDeflEff,0,R.aAR); // uses wing AR (inherited by aileron)
+    let ailArea=R.ailEach*R.cellA; // one aileron area
+    let ailArm=(R.hsBlk-R.ailSBlk/2)*R.cell+R.fWm/2; // distance from centerline to aileron center
+    let qCruise=0.5*P.rho*R.cruiseSpd*R.cruiseSpd;
+    R.rollMoment=2*qCruise*ailArea*ailCL*ailArm; // both ailerons, opposing
+    R.rollMomentArm=ailArm;
+  }
+
+  // ---- Stability warnings ----
+  if(R.Vh<0.25) R.warnings.push('Pitch stability marginal: H-tail volume Vh='+R.Vh.toFixed(2)+' (target 0.3\u20130.7). Increase tail area or tail arm.');
+  if(R.Vv<0.015) R.warnings.push('Yaw stability low: V-fin volume Vv='+R.Vv.toFixed(3)+' (target 0.02\u20130.05). Increase fin area or tail arm.');
+  if(R.sideslipDeg>15) R.warnings.push('Very high sideslip in 20\u00b0 bank: \u03b2='+R.sideslipDeg.toFixed(1)+'\u00b0. Consider larger vertical fin, twin fins, or longer tail arm.');
+  if(R.ldCr<3) R.warnings.push('Low cruise L/D ('+R.ldCr.toFixed(1)+'). Increase streamlining, lengthen fuselage, or reduce fuselage cross-section.');
+  if(R.staticMarginOptimal<0.05) R.warnings.push('Low static margin ('+(R.staticMarginOptimal*100).toFixed(1)+'%) even at optimal CoG. Tail too small for stable flight — increase H-tail area or tail arm.');
+  if(Math.abs(R.cmNetAchieved)>0.05) R.warnings.push('Residual pitch trim imbalance (\u0394Cm='+R.cmNetAchieved.toFixed(3)+') even with recommended tail camber. The target tail reflex ('+R.tailCamberForTrimDeg.toFixed(1)+'\u00b0) exceeds what block combinations can achieve — consider lengthening tail chord, adjusting CoG, or accepting elevator-up trim.');
+
+  render(R);
+}
+
+function findAlpha(clEff,camRad,ar){
+  for(let a=0;a<=20;a+=0.05){
+    if(P.clEff(a,camRad,ar)>=clEff)return a;
+  }
+  return null;
+}
+
+// =====================================================================
+//  RENDER
+// =====================================================================
+function render(R){
+  const el=document.getElementById('results');
+  const f=(v,d=1)=>v.toFixed(d);
+  const fk=v=>v>=1e6?(v/1e6).toFixed(1)+'M':v>=1000?(v/1000).toFixed(1)+'k':Math.round(v).toString();
+  const kmh=v=>(v*3.6).toFixed(0);
+  const cruiseAoAStr=R.cruiseAoA!==null?f(R.cruiseAoA,1)+'\u00b0':'> stall!';
+
+  el.innerHTML=`
+  <div class="panel">
+    <h2>Performance Summary</h2>
+    <div class="summary-grid">
+      <div class="stat"><div class="val">${fk(R.tm)} kg</div><div class="lbl">Total Aircraft Weight</div></div>
+      <div class="stat"><div class="val">${f(R.wLoad)} kg/m\u00b2</div><div class="lbl">Wing Loading</div></div>
+      <div class="stat"><div class="val">${f(R.stallSpd)} m/s <span class="unit">(${kmh(R.stallSpd)} km/h)</span></div><div class="lbl">Stall Speed${R.flaps?' (flaps)':''}</div></div>
+      <div class="stat"><div class="val">${f(R.cruiseSpd)} m/s <span class="unit">(${kmh(R.cruiseSpd)} km/h)</span></div><div class="lbl">Cruise Speed</div></div>
+      <div class="stat"><div class="val">${cruiseAoAStr}</div><div class="lbl">Cruise AoA (nose-up pitch)</div></div>
+      <div class="stat"><div class="val">${f(R.thrust/1000,1)} kN</div><div class="lbl">Required Cruise Thrust</div></div>
+      <div class="stat"><div class="val">${f(R.bestLD,1)} @ ${f(R.bestLDSpd,0)} m/s</div><div class="lbl">Best L/D</div></div>
+      <div class="stat"><div class="val">${f(R.maxBank,0)}\u00b0</div><div class="lbl">Max Sustained Bank</div></div>
+    </div>
+    ${R.flaps?`<div class="tip">Without flaps (clean): stall &asymp; <strong>${f(R.stallSpdClean)} m/s</strong> (${kmh(R.stallSpdClean)} km/h)</div>`:''}
+    ${R.warnings.length>0?R.warnings.map(w=>`<div class="tip warn"><strong>Warning:</strong> ${w}</div>`).join(''):''}
+  </div>
+
+  <div class="panel">
+    <h2>Wing Design</h2>
+    <div class="sc"><div class="dot" style="background:var(--wing)"></div>
+      <div class="info"><div class="name">Wing (per side, total chord incl. ctrl surfaces)</div>
+        <div class="dims">${R.hsBlk} span &times; ${R.chordBlk} chord blocks &nbsp;|&nbsp; ${f(R.hsBlk*R.cell)}m &times; ${f(R.chordBlk*R.cell)}m</div></div>
+      <div class="blk">${R.hsBlk*R.chordBlk}/side</div></div>
+    <table>
+      <tr><td>Total wing planform</td><td><strong>${R.wTotalBlk} blocks</strong></td><td>${f(R.aSw)} m\u00b2</td></tr>
+      <tr><td>Main grid structural chord</td><td>${R.structCBlk} blocks</td><td>${f(R.structCBlk*R.cell)} m</td></tr>
+      <tr><td>Control surface chord (subgrid)</td><td>${R.ctrlCBlk} blocks</td><td>${f(R.ctrlCBlk*R.cell)} m</td></tr>
+      <tr><td>Full wingspan</td><td>${Math.round(R.aSpan/R.cell)} blocks</td><td>${f(R.aSpan)} m</td></tr>
+      <tr><td>Half-wing AR (mod physics)</td><td colspan="2">${f(R.aAR,2)}</td></tr>
+      <tr><td>Stall AoA (geometric)</td><td colspan="2">${f(R.stallGeoA)}\u00b0</td></tr>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Recommended Camber Setup</h2>
+    <p style="font-size:0.82em;color:var(--fg2);margin-bottom:8px">
+      Build your wing and tail with these specific blocks to get neutral vertical speed at 0\u00b0 fuselage pitch
+      (no dive, no climb, no elevator input needed at cruise speed). Pitch trim balanced automatically.</p>
+
+    <h3 style="color:var(--wing)">Wing (${R.chordBlk}-block chord)</h3>
+    <table style="margin-bottom:10px">
+      <tr><td>Target camber for neutral cruise</td><td><strong>${f(R.targetWingCamberRad*57.2958,2)}\u00b0</strong></td></tr>
+      <tr><td>Achievable with recommended blocks</td>
+        <td><strong>${f(R.wingCamberAchievedRad*57.2958,2)}\u00b0</strong>
+          ${Math.abs(R.wingCamberAchievedRad-R.targetWingCamberRad)<0.005?' \u2705':' (\u00B1'+f((R.wingCamberAchievedRad-R.targetWingCamberRad)*57.2958,2)+'\u00b0)'}</td></tr>
+      <tr style="background:#1a3a2a"><td><strong>Wing Leading Edge</strong></td><td><strong>${R.wingBlocks.leBlock}</strong></td></tr>
+      <tr style="background:#1a3a2a"><td><strong>Wing Trailing Edge</strong></td><td><strong>${R.wingBlocks.teBlock}</strong></td></tr>
+    </table>
+    <div class="tip" style="margin-bottom:10px;font-size:0.85em"><strong>Wing build:</strong> ${R.wingBlocks.buildHint}</div>
+
+    <h3 style="color:var(--htail)">Horizontal Tail (${R.htTotalCBlk}-block chord)</h3>
+    <table style="margin-bottom:10px">
+      <tr><td>Target reflex camber for pitch trim</td><td><strong>${f(R.tailCamberForTrimDeg,2)}\u00b0</strong></td></tr>
+      <tr><td>Achievable with recommended blocks</td>
+        <td><strong>${f(R.tailCamberAchievedDeg,2)}\u00b0</strong>
+          ${Math.abs(R.tailCamberAchievedDeg-R.tailCamberForTrimDeg)<0.3?' \u2705':' (\u00B1'+f(R.tailCamberAchievedDeg-R.tailCamberForTrimDeg,2)+'\u00b0)'}</td></tr>
+      <tr style="background:#1a3a2a"><td><strong>Tail Leading Edge</strong></td><td><strong>${R.tailBlocks.leBlock}</strong></td></tr>
+      <tr style="background:#1a3a2a"><td><strong>Tail Trailing Edge</strong></td><td><strong>${R.tailBlocks.teBlock}</strong></td></tr>
+    </table>
+    <div class="tip" style="margin-bottom:10px;font-size:0.85em"><strong>Tail build:</strong> ${R.tailBlocks.buildHint}</div>
+
+    <div class="tip" style="font-size:0.82em;color:var(--fg2)"><strong>Why these specific blocks:</strong>
+      PAR computes row camber from the LE and TE first-cells only (stacking further slopes behind them has no aerodynamic effect).
+      Effective camber = (LE slope - TE slope) / (2\u00d7\u221A${R.chordBlk}) for wing, mirrored for tail.
+      We pick the slope types that hit your target camber closest given your wing's ${R.chordBlk}-block chord.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Tail &amp; Fin</h2>
+    <div class="sc"><div class="dot" style="background:var(--htail)"></div>
+      <div class="info"><div class="name">H-Stabilizer (per side, incl. elevator)</div>
+        <div class="dims">${R.htHsBlk} span &times; ${R.htTotalCBlk} chord &nbsp;|&nbsp; ${f(R.htHsBlk*R.cell)}m &times; ${f(R.htTotalCBlk*R.cell)}m</div></div>
+      <div class="blk">${R.htHsBlk*R.htTotalCBlk}/side</div></div>
+    <div class="sc"><div class="dot" style="background:var(--fin)"></div>
+      <div class="info"><div class="name">Vertical Fin${R.twinFin?' (&times;2 twin)':''} (sized for \u03b2\u22648\u00b0, incl. rudder)</div>
+        <div class="dims">${R.vfHBlk} ht &times; ${R.vfTotalCBlk} chord &nbsp;|&nbsp; ${f(R.vfHBlk*R.cell)}m &times; ${f(R.vfTotalCBlk*R.cell)}m${R.twinFin?' each':''}</div></div>
+      <div class="blk">${R.twinFin?R.vfBlkSingle+'/ea':R.vfBlk+' blk'}</div></div>
+    <table>
+      <tr><td>H-Tail planform</td><td><strong>${R.htBlk} blocks</strong></td><td>${f(R.aHTa)} m\u00b2</td></tr>
+      <tr><td>H-Tail struct / elevator chord</td><td>${R.htStructCBlk} / ${R.elCBlk} blocks</td><td>AR ${f(R.htAR,2)}</td></tr>
+      <tr><td>V-Fin planform${R.twinFin?' (&times;2)':''}</td><td><strong>${R.vfBlk} blocks</strong></td><td>${f(R.aVFa)} m\u00b2</td></tr>
+      <tr><td>V-Fin struct / rudder chord</td><td>${R.vfStructCBlk} / ${R.rdCBlk} blocks</td><td></td></tr>
+      <tr><td>Tail arm</td><td colspan="2">${f(R.tailArm)} m</td></tr>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Control Surfaces (subgrids on hinges, flush at trailing edge)</h2>
+    <p style="font-size:0.8em;color:var(--fg2);margin-bottom:6px">
+      Each surface is a <strong>separate subgrid</strong> via hinge at the trailing edge of the structural chord.
+      They are <strong>flush within</strong> the total wing/tail chord, not extending beyond.</p>
+    <div class="sc"><div class="dot" style="background:var(--ail)"></div>
+      <div class="info"><div class="name">Ailerons (&times;2, outboard)</div>
+        <div class="dims">${R.ailSBlk} span &times; ${R.ailCBlk} chord &nbsp;|&nbsp; ${f(R.ailSBlk*R.cell)}m &times; ${f(R.ailCBlk*R.cell)}m each</div></div>
+      <div class="blk">${R.ailEach}/ea</div></div>
+    ${R.flaps?`<div class="sc"><div class="dot" style="background:var(--flap)"></div>
+      <div class="info"><div class="name">Flaps (&times;2, inboard)</div>
+        <div class="dims">${R.flSBlk} span &times; ${R.flCBlk} chord &nbsp;|&nbsp; ${f(R.flSBlk*R.cell)}m &times; ${f(R.flCBlk*R.cell)}m each</div></div>
+      <div class="blk">${R.flSBlk*R.flCBlk}/ea</div></div>`:''}
+    <div class="sc"><div class="dot" style="background:var(--elev)"></div>
+      <div class="info"><div class="name">Elevator (full tail span)</div>
+        <div class="dims">${R.elSBlk} span &times; ${R.elCBlk} chord &nbsp;|&nbsp; ${f(R.elSBlk*R.cell)}m &times; ${f(R.elCBlk*R.cell)}m</div></div>
+      <div class="blk">${R.elBlk} blk</div></div>
+    <div class="sc"><div class="dot" style="background:var(--rud)"></div>
+      <div class="info"><div class="name">Rudder${R.twinFin?' (&times;2)':''}</div>
+        <div class="dims">${R.rdHBlk} ht &times; ${R.rdCBlk} chord &nbsp;|&nbsp; ${f(R.rdHBlk*R.cell)}m &times; ${f(R.rdCBlk*R.cell)}m${R.twinFin?' each':''}</div></div>
+      <div class="blk">${R.twinFin?R.rdBlkSingle+'/ea':R.rdBlk+' blk'}</div></div>
+  </div>
+
+  <div class="panel">
+    <h2>Weight Breakdown</h2>
+    <table>
+      <tr><th>Component</th><th>Blocks</th><th>Mass</th></tr>
+      <tr><td>Fuselage (your input)</td><td>&mdash;</td><td>${fk(R.fm)} kg</td></tr>
+      <tr><td style="color:var(--wing)">Wing (main grid)</td><td>${R.wStructBlk}</td><td>${fk(R.wStructBlk*R.bm)} kg</td></tr>
+      <tr><td style="color:var(--ail)">Ailerons (&times;2, subgrid)</td><td>${R.ailTot}</td><td>${fk(R.ailTot*R.bm)} kg</td></tr>
+      ${R.flaps?`<tr><td style="color:var(--flap)">Flaps (&times;2, subgrid)</td><td>${R.flTot}</td><td>${fk(R.flTot*R.bm)} kg</td></tr>`:''}
+      <tr><td style="color:var(--htail)">H-Tail (main grid)</td><td>${R.htBlk}</td><td>${fk(R.htBlk*R.bm)} kg</td></tr>
+      <tr><td style="color:var(--elev)">Elevator (subgrid)</td><td>${R.elBlk}</td><td>${fk(R.elBlk*R.bm)} kg</td></tr>
+      <tr><td style="color:var(--fin)">V-Fin${R.twinFin?' (&times;2)':''} (main grid)</td><td>${R.vfBlk}</td><td>${fk(R.vfBlk*R.bm)} kg</td></tr>
+      <tr><td style="color:var(--rud)">Rudder${R.twinFin?' (&times;2)':''} (subgrid)</td><td>${R.rdBlk}</td><td>${fk(R.rdBlk*R.bm)} kg</td></tr>
+      <tr><td>Mechanical (${R.nCtrl}&times; [2R+2H])</td><td>&mdash;</td><td>${fk(R.mechW)} kg</td></tr>
+      <tr class="total"><td>TOTAL</td><td>${R.sBlk} blk</td><td>${fk(R.tm)} kg</td></tr>
+    </table>
+    <div class="tip">${R.isSmall?'Small':'Large'} grid: each ctrl surface = 2 rotors + 2 hinges = ${fk(R.mechPer)} kg. ${R.nCtrl} surfaces = ${fk(R.mechW)} kg mechanical.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Top-View Schematic <span class="unit">(blocks, ctrl surfaces flush at trailing edge)</span></h2>
+    <div class="legend">
+      <div class="legend-item"><div class="sw" style="background:var(--fuse)"></div>Fuselage</div>
+      <div class="legend-item"><div class="sw" style="background:var(--wing)"></div>Wing (struct)</div>
+      <div class="legend-item"><div class="sw" style="background:var(--ail)"></div>Aileron</div>
+      ${R.flaps?'<div class="legend-item"><div class="sw" style="background:var(--flap)"></div>Flap</div>':''}
+      <div class="legend-item"><div class="sw" style="background:var(--htail)"></div>H-Tail</div>
+      <div class="legend-item"><div class="sw" style="background:var(--elev)"></div>Elevator</div>
+      <div class="legend-item"><div class="sw" style="background:var(--fin)"></div>Fin</div>
+      <div class="legend-item"><div class="sw" style="background:var(--rud)"></div>Rudder</div>
+    </div>
+    <svg id="diagram" viewBox="0 0 800 600" style="max-height:480px;background:#111528"></svg>
+  </div>
+
+  <div class="panel">
+    <h2>Drag Breakdown at Cruise</h2>
+    <table>
+      <tr><th>Source</th><th>Force</th><th>%</th></tr>
+      <tr><td>Wing (profile+induced)</td><td>${f(R.dWing/1000,1)} kN</td><td>${f(R.dWing/R.dTot*100)}%</td></tr>
+      <tr><td>Grid form drag (${f(R.gridFrontal,1)} m\u00b2)</td><td>${f(R.dForm/1000,1)} kN</td><td>${f(R.dForm/R.dTot*100)}%</td></tr>
+      <tr><td>Fuselage skin friction</td><td>${f(R.dFuseSkin/1000,2)} kN</td><td>${f(R.dFuseSkin/R.dTot*100)}%</td></tr>
+      <tr><td>H-Tail (skin + trim)</td><td>${f(R.dTail/1000,2)} kN</td><td>${f(R.dTail/R.dTot*100)}%</td></tr>
+      <tr><td>V-Fin (skin friction)</td><td>${f(R.dFin/1000,2)} kN</td><td>${f(R.dFin/R.dTot*100)}%</td></tr>
+      <tr class="total"><td>Total</td><td>${f(R.dTot/1000,1)} kN</td><td>100%</td></tr>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h2>Stability Analysis</h2>
+    <table>
+      <tr><th>Metric</th><th>Value</th><th>Target</th><th>Status</th></tr>
+      <tr><td>H-Tail Volume (V<sub>h</sub>)</td>
+        <td><strong>${f(R.Vh,2)}</strong></td><td>0.30\u20130.70</td>
+        <td style="color:${R.Vh>=0.25&&R.Vh<=0.85?'var(--green)':'var(--orange)'}">${R.Vh<0.25?'LOW':R.Vh>0.85?'HIGH':'OK'}</td></tr>
+      <tr><td>V-Fin Volume (V<sub>v</sub>)</td>
+        <td><strong>${f(R.Vv,3)}</strong></td><td>0.020\u20130.050</td>
+        <td style="color:${R.Vv>=0.015&&R.Vv<=0.06?'var(--green)':'var(--orange)'}">${R.Vv<0.015?'LOW':R.Vv>0.06?'HIGH':'OK'}</td></tr>
+      <tr><td>Sideslip in 20\u00b0 bank (\u03b2)</td>
+        <td><strong>${f(R.sideslipDeg,1)}\u00b0</strong> <span style="font-size:0.75em;color:var(--text-dim)">(${f(R.crossflowContrib,0)}% fuselage)</span></td><td>&lt; 10\u00b0</td>
+        <td style="color:${R.sideslipDeg<=8?'var(--green)':R.sideslipDeg<=15?'var(--yellow)':'var(--orange)'}">${R.sideslipDeg<=8?'GOOD':R.sideslipDeg<=15?'OK':'HIGH'}</td></tr>
+      <tr><td>Cruise L/D</td>
+        <td><strong>${f(R.ldCr,1)}</strong></td><td>&ge; 3.0</td>
+        <td style="color:${R.ldCr>=5?'var(--green)':R.ldCr>=3?'var(--yellow)':'var(--orange)'}">${R.ldCr>=5?'GOOD':R.ldCr>=3?'OK':'LOW'}</td></tr>
+      <tr><td>Wing downwash at tail</td>
+        <td><strong>${f(R.downwashDeg,1)}\u00b0</strong></td><td colspan="2">Tail eff. AoA = ${R.cruiseAoA!==null?f(R.tailEffAoA,1):'?'}\u00b0 at cruise</td></tr>
+      <tr><td>Roll moment (15\u00b0 aileron)</td>
+        <td><strong>${fk(R.rollMoment)} N\u00b7m</strong></td><td colspan="2">Arm: ${f(R.rollMomentArm)} m</td></tr>
+    </table>
+    <div class="tip" style="margin-bottom:4px"><strong>V<sub>h</sub></strong> = S<sub>tail</sub>\u00d7l<sub>t</sub> / (S<sub>wing</sub>\u00d7c<sub>wing</sub>). Higher = more pitch authority. Below 0.3 may lack pitch control.</div>
+    <div class="tip" style="margin-bottom:4px"><strong>V<sub>v</sub></strong> = S<sub>fin</sub>\u00d7l<sub>v</sub> / (S<sub>wing</sub>\u00d7b). Higher = stronger yaw stability. Below 0.02 causes excessive sideslip.</div>
+    <div class="tip"><strong>Sideslip (\u03b2)</strong>: equilibrium yaw angle in a 20\u00b0 banked turn at cruise speed <strong>without rudder</strong>. Includes both fin side force and fuselage crossflow (linear-in-\u03b2 force from body at small incidence, CrossflowK=0.10). Fin is auto-sized to target \u2264 8\u00b0 (block quantization may shift final value). Twin fins split the required area across two fins.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Center of Gravity &amp; Pitch Trim</h2>
+    <p style="font-size:0.82em;color:var(--fg2);margin-bottom:8px">
+      <strong>Neutral Point (NP)</strong> is where lift acts such that any AoA increase produces no net pitch moment. For a stable aircraft, CoG must be <em>ahead</em> of NP. Static margin = (NP - CoG)/chord; target 10-15% for conventional aircraft.</p>
+    <table>
+      <tr><th>Metric</th><th>Value</th><th>Target / Notes</th></tr>
+      <tr><td>Neutral Point (from wing LE)</td>
+        <td><strong>${f(R.npFromLE*100,1)}% MAC</strong> (${f(R.npFromLEm,2)} m)</td>
+        <td>Computed from wing + H-tail contributions with downwash factor</td></tr>
+      <tr><td>Recommended CoG range</td>
+        <td><strong>${f(R.cgRecommendedMin*100,0)}-${f(R.cgRecommendedMax*100,0)}% MAC</strong></td>
+        <td>10-20% static margin</td></tr>
+      <tr><td>Optimal CoG (15% SM)</td>
+        <td><strong>${f(R.cgOptimal*100,1)}% MAC</strong> (${f(R.cgOptimalM,2)} m from wing LE)</td>
+        <td>Place fuel, heavy equipment to target this</td></tr>
+      <tr><td>Static Margin at optimal</td>
+        <td><strong>${f(R.staticMarginOptimal*100,1)}%</strong></td>
+        <td style="color:${R.staticMarginOptimal>=0.10?'var(--green)':R.staticMarginOptimal>=0.05?'var(--yellow)':'var(--orange)'}">${R.staticMarginOptimal>=0.10?'GOOD':R.staticMarginOptimal>=0.05?'MARGINAL':'UNSTABLE'}</td></tr>
+    </table>
+    <h3 style="margin-top:12px">Pitch Moment Balance at Cruise (with recommended blocks)</h3>
+    <table>
+      <tr><th>Contribution</th><th>Cm</th><th>Effect</th></tr>
+      <tr><td>Wing Cm<sub>ac</sub> (from camber)</td>
+        <td><strong>${f(R.cmAcWing,3)}</strong></td>
+        <td>${R.cmAcWing<0?'nose-down (positive camber)':'nose-up or zero'}</td></tr>
+      <tr><td>Wing lift × (CoG - AC) arm</td>
+        <td><strong>${f(R.cmWingLift,3)}</strong></td>
+        <td>${R.cmWingLift>0?'pitch-up (CoG aft of AC → lift ahead of CoG)':R.cmWingLift<0?'pitch-down (CoG fwd of AC)':'neutral (CoG at AC)'}</td></tr>
+      <tr><td>H-Tail with recommended reflex camber</td>
+        <td><strong>${f(R.cmTailAchieved,3)}</strong></td>
+        <td>Tail CL=${f(R.tailCLActual,2)} at α_eff incl. ${f(R.tailCamberAchievedDeg,1)}\u00b0 camber</td></tr>
+      <tr class="total"><td>Net Cm about CoG (trimmed)</td>
+        <td><strong>${f(R.cmNetAchieved,3)}</strong></td>
+        <td style="color:${Math.abs(R.cmNetAchieved)<0.02?'var(--green)':Math.abs(R.cmNetAchieved)<0.05?'var(--yellow)':'var(--orange)'}">${Math.abs(R.cmNetAchieved)<0.02?'TRIMMED \u2713':Math.abs(R.cmNetAchieved)<0.05?'NEAR TRIM':'RESIDUAL — use elevator trim'}</td></tr>
+    </table>
+    <div class="tip"><strong>CoG placement in SE</strong>: Place heavy components (batteries, reactors, cargo, fuel) to shift CoG toward the optimal position. Test in-game with <code>/aero debug markers</code> — Center of Lift should be <em>aft</em> of CoM with the indicated margin. Forward-CoG aircraft are stable but sluggish; aft-CoG aircraft are responsive but can be dangerous.</div>
+  </div>
+
+  <div class="panel">
+    <h2>Performance Charts</h2>
+    <div class="chart-row">
+      <div><h3 style="text-align:center">CL vs Angle of Attack</h3><canvas id="cCL" width="480" height="300"></canvas></div>
+      <div><h3 style="text-align:center">L/D vs Speed</h3><canvas id="cLD" width="480" height="300"></canvas></div>
+    </div>
+    <div class="chart-row" style="margin-top:10px">
+      <div><h3 style="text-align:center">Drag vs Speed</h3><canvas id="cDr" width="480" height="300"></canvas></div>
+      <div><h3 style="text-align:center">Required AoA vs Speed</h3><canvas id="cAo" width="480" height="300"></canvas></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Building Guide</h2>
+    <div class="tip" style="margin-bottom:6px"><strong>Wing clearance:</strong> ${R.clAbove} empty blocks above AND below for lift qualification.</div>
+    <div class="tip" style="margin-bottom:6px"><strong>Fin clearance:</strong> ${R.clFin} empty blocks on each side of vertical surfaces.</div>
+    <div class="tip" style="margin-bottom:6px"><strong>Thickness:</strong> All lifting surfaces must be exactly <strong>1 block thick</strong>.</div>
+    <div class="tip" style="margin-bottom:6px"><strong>Control surfaces:</strong> Build on separate subgrid via hinge at the structural/ctrl chord boundary. The wing chord shown above includes both structural and ctrl portions &mdash; ctrl surfaces are flush at the trailing edge.</div>
+    <div class="tip" style="margin-bottom:6px"><strong>Half-wing AR:</strong> The mod sees each half-wing as a separate surface (left/right don't connect through the fuselage). AR = ${f(R.aAR,2)} is per half-wing.</div>
+    <div class="tip warn"><strong>SE mass note:</strong> SE aircraft weigh ~3&times; more than real equivalents due to block mass. These numbers are calibrated for SE.</div>
+  </div>
+  `;
+
+  drawDiagram(R);
+  setTimeout(()=>{drawCL(R);drawLD(R);drawDrag(R);drawAoA(R);},50);
+}
+
+// =====================================================================
+//  SVG DIAGRAM — flush control surfaces within wing/tail chord
+// =====================================================================
+function drawDiagram(R){
+  const svg=document.getElementById('diagram');
+  if(!svg)return;
+  const totalSpanBlk=R.hsBlk*2+R.fW+2;
+  const totalLenBlk=R.fL+4;
+  const margin=50;
+  const scX=(800-2*margin)/totalSpanBlk;
+  const scY=(600-2*margin)/totalLenBlk;
+  const sc=Math.min(scX,scY,25);
+  const cx=400, noseY=margin+15;
+
+  function blkRect(xBlk,yBlk,wBlk,hBlk,fill,op=0.85){
+    let x=cx+xBlk*sc, y=noseY+yBlk*sc, w=wBlk*sc, h=hBlk*sc;
+    let s=`<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill}" opacity="${op}" stroke="#333" stroke-width="0.5"/>`;
+    if(wBlk<=40&&hBlk<=40){
+      for(let i=1;i<wBlk;i++) s+=`<line x1="${x+i*sc}" y1="${y}" x2="${x+i*sc}" y2="${y+h}" stroke="#222" stroke-width="0.3"/>`;
+      for(let i=1;i<hBlk;i++) s+=`<line x1="${x}" y1="${y+i*sc}" x2="${x+w}" y2="${y+i*sc}" stroke="#222" stroke-width="0.3"/>`;
+    }
+    return s;
+  }
+  function txt(x,y,t,sz=9,c='#aab'){return `<text x="${cx+x*sc}" y="${noseY+y*sc}" fill="${c}" font-size="${sz}" text-anchor="middle" font-family="sans-serif">${t}</text>`;}
+  function dim(x1,y1,x2,y2,label){
+    let px1=cx+x1*sc,py1=noseY+y1*sc,px2=cx+x2*sc,py2=noseY+y2*sc;
+    let mx=(px1+px2)/2,my=(py1+py2)/2;
+    return `<line x1="${px1}" y1="${py1}" x2="${px2}" y2="${py2}" stroke="#556" stroke-width="0.7" stroke-dasharray="3,2"/>`+
+      `<text x="${mx}" y="${my-4}" fill="#8af" font-size="8" text-anchor="middle" font-family="sans-serif">${label}</text>`;
+  }
+
+  let s='';
+  s+=`<polygon points="${cx-5},${noseY-10} ${cx+5},${noseY-10} ${cx},${noseY-20}" fill="#4cc9f0" opacity="0.5"/>`;
+  s+=`<text x="${cx}" y="${noseY-24}" fill="#4cc9f0" font-size="8" text-anchor="middle" font-family="sans-serif">FLIGHT</text>`;
+
+  const fw2=R.fW/2;
+  const wY=R.fL*0.35;
+  const sc2=R.structCBlk; // structural chord blocks
+  const cc=R.ctrlCBlk;    // control surface chord blocks
+
+  // Fuselage
+  s+=blkRect(-fw2,0,R.fW,R.fL,'#556',0.7);
+
+  // Left wing: structural portion (leading edge to hinge line)
+  s+=blkRect(-fw2-R.hsBlk,wY,R.hsBlk,sc2,'#4488cc');
+  // Right wing structural
+  s+=blkRect(fw2,wY,R.hsBlk,sc2,'#4488cc');
+
+  // Ailerons flush at trailing edge (outboard)
+  let ailInboard=R.hsBlk-R.ailSBlk; // inboard edge of aileron (from fuselage edge)
+  // Left aileron
+  s+=blkRect(-fw2-R.hsBlk,wY+sc2,R.ailSBlk,cc,'#66bbee');
+  // Left wing filler (inboard of aileron, trailing edge)
+  if(ailInboard>0) s+=blkRect(-fw2-ailInboard,wY+sc2,ailInboard,cc,'#4488cc',0.6);
+  // Right aileron
+  s+=blkRect(fw2+ailInboard,wY+sc2,R.ailSBlk,cc,'#66bbee');
+  // Right wing filler
+  if(ailInboard>0) s+=blkRect(fw2,wY+sc2,ailInboard,cc,'#4488cc',0.6);
+
+  // Flaps flush at trailing edge (inboard)
+  if(R.flaps){
+    // Left flap (inboard, next to fuselage)
+    s+=blkRect(-fw2-R.flSBlk,wY+sc2,R.flSBlk,cc,'#a78bfa');
+    // Right flap
+    s+=blkRect(fw2,wY+sc2,R.flSBlk,cc,'#a78bfa');
+  }
+
+  // H-tail at 90% — structural + elevator flush
+  const tY=R.fL*0.90;
+  s+=blkRect(-R.htHsBlk,tY,R.htHsBlk,R.htStructCBlk,'#44aa66');
+  s+=blkRect(0,tY,R.htHsBlk,R.htStructCBlk,'#44aa66');
+  // Elevator flush at trailing edge
+  s+=blkRect(-R.htHsBlk,tY+R.htStructCBlk,R.htHsBlk*2,R.elCBlk,'#66dd88');
+
+  // Fin + rudder flush
+  const finW=Math.max(0.3,R.cell<1?0.5:0.3);
+  s+=blkRect(-finW/2,tY-R.vfStructCBlk*0.3,finW,R.vfStructCBlk,'#cc8844',1);
+  s+=blkRect(-finW/2-0.05,tY-R.vfStructCBlk*0.3+R.vfStructCBlk,finW+0.1,R.rdCBlk,'#ffaa66',1);
+
+  // Labels
+  s+=txt(-fw2-R.hsBlk/2,wY+sc2/2,'WING',8,'#fff');
+  s+=txt(fw2+R.hsBlk/2,wY+sc2/2,'WING',8,'#fff');
+  s+=txt(0,R.fL/2,'FUSE',8,'#ccc');
+  s+=txt(0,tY+R.htTotalCBlk/2,'TAIL',7,'#fff');
+
+  // Dimensions
+  s+=dim(-fw2-R.hsBlk,wY-1.5,fw2+R.hsBlk,wY-1.5,`${R.hsBlk*2+R.fW} blk span (${(R.aSpan).toFixed(1)}m)`);
+  let dx=fw2+R.hsBlk+1;
+  s+=dim(dx,wY,dx,wY+R.chordBlk,`${R.chordBlk} blk chord`);
+  s+=dim(-fw2-R.hsBlk-2,0,-fw2-R.hsBlk-2,R.fL,`${R.fL} blk`);
+
+  svg.innerHTML=s;
+}
+
+// =====================================================================
+//  CHARTS
+// =====================================================================
+function chartBase(id,cfg){
+  const cv=document.getElementById(id);if(!cv)return null;
+  const dpr=window.devicePixelRatio||1;
+  const r=cv.getBoundingClientRect();
+  cv.width=r.width*dpr;cv.height=r.height*dpr;
+  const ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+  const w=r.width,h=r.height;
+  const p={l:50,r:12,t:12,b:30};
+  const pw=w-p.l-p.r,ph=h-p.t-p.b;
+  ctx.fillStyle='#1a1d35';ctx.fillRect(0,0,w,h);
+  ctx.strokeStyle='#2a2d45';ctx.lineWidth=0.5;
+  for(let i=0;i<=5;i++){
+    let y=p.t+ph*i/5;ctx.beginPath();ctx.moveTo(p.l,y);ctx.lineTo(p.l+pw,y);ctx.stroke();
+    let x=p.l+pw*i/5;ctx.beginPath();ctx.moveTo(x,p.t);ctx.lineTo(x,p.t+ph);ctx.stroke();
+  }
+  ctx.strokeStyle='#556';ctx.lineWidth=1;ctx.beginPath();
+  ctx.moveTo(p.l,p.t);ctx.lineTo(p.l,p.t+ph);ctx.lineTo(p.l+pw,p.t+ph);ctx.stroke();
+  ctx.fillStyle='#889';ctx.font='9px sans-serif';ctx.textAlign='center';
+  for(let i=0;i<=5;i++){let v=cfg.x0+(cfg.x1-cfg.x0)*i/5;ctx.fillText(cfg.xF?cfg.xF(v):v.toFixed(0),p.l+pw*i/5,p.t+ph+16);}
+  ctx.textAlign='right';
+  for(let i=0;i<=5;i++){let v=cfg.y1-(cfg.y1-cfg.y0)*i/5;ctx.fillText(cfg.yF?cfg.yF(v):v.toFixed(1),p.l-4,p.t+ph*i/5+3);}
+  ctx.fillStyle='#aab';ctx.textAlign='center';ctx.font='10px sans-serif';
+  ctx.fillText(cfg.xL,p.l+pw/2,h-2);
+  ctx.save();ctx.translate(11,p.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillText(cfg.yL,0,0);ctx.restore();
+  return{ctx,p,pw,ph,tx:v=>p.l+(v-cfg.x0)/(cfg.x1-cfg.x0)*pw,ty:v=>p.t+(1-(v-cfg.y0)/(cfg.y1-cfg.y0))*ph};
+}
+function line(c,d,col,w=1.5){
+  c.ctx.strokeStyle=col;c.ctx.lineWidth=w;c.ctx.beginPath();let s=false;
+  for(let p of d){let x=c.tx(p[0]),y=c.ty(p[1]);
+    if(isNaN(p[1])||y<c.p.t-5||y>c.p.t+c.ph+5){s=false;continue;}
+    s?c.ctx.lineTo(x,y):c.ctx.moveTo(x,y);s=true;}
+  c.ctx.stroke();
+}
+function mark(c,x,y,col,lbl,below=false){
+  let px=c.tx(x),py=c.ty(y);
+  c.ctx.fillStyle=col;c.ctx.beginPath();c.ctx.arc(px,py,3.5,0,Math.PI*2);c.ctx.fill();
+  c.ctx.font='8px sans-serif';c.ctx.textAlign='center';c.ctx.fillText(lbl,px,below?py+12:py-7);
+}
+function vline(c,x,col){
+  c.ctx.strokeStyle=col;c.ctx.lineWidth=1;c.ctx.setLineDash([4,3]);
+  c.ctx.beginPath();c.ctx.moveTo(c.tx(x),c.p.t);c.ctx.lineTo(c.tx(x),c.p.t+c.ph);c.ctx.stroke();
+  c.ctx.setLineDash([]);
+}
+function hline(c,y,col){
+  c.ctx.strokeStyle=col;c.ctx.lineWidth=1;c.ctx.setLineDash([4,3]);
+  c.ctx.beginPath();c.ctx.moveTo(c.p.l,c.ty(y));c.ctx.lineTo(c.p.l+c.pw,c.ty(y));c.ctx.stroke();
+  c.ctx.setLineDash([]);
+}
+
+function drawCL(R){
+  let c=chartBase('cCL',{x0:0,x1:25,y0:0,y1:Math.ceil(R.clMax*1.3),xL:'Angle of Attack (\u00b0)',yL:'CL_eff (per planform)',xF:v=>v+'\u00b0'});
+  if(!c)return;
+  let d2=[];for(let a=0;a<=25;a+=0.5)d2.push([a,P.cl2d(a)]);
+  line(c,d2,'#555',1);
+  let df=[];for(let a=0;a<=25;a+=0.5)df.push([a,P.clEff(a,0,R.aAR)]);
+  line(c,df,'#4488cc',1.5);
+  if(R.camRad>0){let dc=[];for(let a=0;a<=25;a+=0.5)dc.push([a,P.clEff(a,R.camRad,R.aAR)]);line(c,dc,'#4ade80',2);}
+  vline(c,R.stallGeoA,'#f72585');
+  if(R.cruiseAoA!==null)mark(c,R.cruiseAoA,P.clEff(R.cruiseAoA,R.camRad,R.aAR),'#4cc9f0','Cruise');
+  mark(c,R.stallGeoA,R.clMax,'#f72585','Stall',true);
+  c.ctx.font='8px sans-serif';c.ctx.textAlign='left';c.ctx.fillStyle='#555';
+  c.ctx.fillText('2D single-face',c.p.l+6,c.p.t+10);
+  c.ctx.fillStyle='#4488cc';c.ctx.fillText('Half-wing AR='+R.aAR.toFixed(2),c.p.l+6,c.p.t+20);
+  if(R.camRad>0){c.ctx.fillStyle='#4ade80';c.ctx.fillText('+camber',c.p.l+6,c.p.t+30);}
+}
+function drawLD(R){
+  let mx=Math.min(R.cruiseSpd*2,350);
+  let c=chartBase('cLD',{x0:0,x1:mx,y0:0,y1:Math.ceil(R.bestLD*1.3),xL:'Speed (m/s)',yL:'L/D'});
+  if(!c)return;
+  line(c,R.spdData.filter(d=>!isNaN(d.ld)).map(d=>[d.v,d.ld]),'#4ade80',2);
+  mark(c,R.bestLDSpd,R.bestLD,'#facc15',`Best: ${R.bestLD.toFixed(1)}`);
+  mark(c,R.cruiseSpd,R.ldCr,'#4cc9f0','Cruise',true);
+  vline(c,R.stallSpd,'#f72585');
+}
+function drawDrag(R){
+  let mx=Math.min(R.cruiseSpd*2,350);
+  let c=chartBase('cDr',{x0:0,x1:mx,y0:0,y1:R.dTot*2.5/1000,xL:'Speed (m/s)',yL:'Total Drag (kN)',yF:v=>v.toFixed(0)});
+  if(!c)return;
+  line(c,R.spdData.filter(d=>!isNaN(d.d)).map(d=>[d.v,d.d/1000]),'#fb923c',2);
+  mark(c,R.cruiseSpd,R.dTot/1000,'#4cc9f0',`${(R.dTot/1000).toFixed(1)} kN`);
+  vline(c,R.stallSpd,'#f72585');
+}
+function drawAoA(R){
+  let mx=Math.min(R.cruiseSpd*2,350);
+  let c=chartBase('cAo',{x0:0,x1:mx,y0:0,y1:20,xL:'Speed (m/s)',yL:'Required AoA (\u00b0)',yF:v=>v.toFixed(0)+'\u00b0'});
+  if(!c)return;
+  line(c,R.spdData.filter(d=>!isNaN(d.a)&&d.a>=0).map(d=>[d.v,d.a]),'#a78bfa',2);
+  hline(c,R.stallGeoA,'#f72585');
+  c.ctx.fillStyle='#f72585';c.ctx.font='8px sans-serif';c.ctx.textAlign='right';
+  c.ctx.fillText(`Stall ${R.stallGeoA.toFixed(1)}\u00b0`,c.p.l+c.pw-4,c.ty(R.stallGeoA)-4);
+  let cd=R.spdData.find(d=>Math.abs(d.v-R.cruiseSpd)<2);
+  if(cd&&!isNaN(cd.a))mark(c,R.cruiseSpd,cd.a,'#4cc9f0','Cruise');
+}
+
+// =====================================================================
+//  BINDINGS
+// =====================================================================
+document.querySelectorAll('input,select').forEach(el=>{
+  el.addEventListener('change',calculate);
+  el.addEventListener('input',()=>{clearTimeout(el._d);el._d=setTimeout(calculate,120);});
+});
+calculate();
+</script>
+</body>
+</html>
