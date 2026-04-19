@@ -91,12 +91,19 @@ canvas{width:100%;background:var(--bg2);border-radius:5px;border:1px solid var(-
     <div class="check-row"><input type="checkbox" id="includeFlaps"><label for="includeFlaps">Include Flaps (lower stall speed)</label></div>
     <div class="check-row"><input type="checkbox" id="twinFin"><label for="twinFin">Twin Vertical Fins (better yaw for heavy aircraft)</label></div>
     <hr class="divider">
+    <h3>Wing-Mounted Thrusters <span class="unit">(per side)</span></h3>
+    <div class="row">
+      <div><label>Count per wing</label><input type="number" id="wingThrusters" value="0" min="0" max="20" step="1"></div>
+      <div><label>Size</label><select id="wingThrusterSize"><option value="small" selected>Small</option><option value="large">Large</option></select></div>
+    </div>
+    <div class="tip" style="font-size:0.78em">Wing-mounted atmo thrusters disqualify ~2 cells each (small) or ~8 cells (large) from lift due to clearance &amp; occupancy.</div>
+    <hr class="divider">
     <h3>Speed Targets <span class="unit">(m/s, optional)</span></h3>
     <div class="row">
       <div><label>Stall Speed</label><input type="number" id="targetStall" placeholder="auto" min="5" max="300" step="1"></div>
       <div><label>Cruise Speed</label><input type="number" id="targetCruise" placeholder="auto" min="10" max="500" step="5"></div>
     </div>
-    <div class="tip" style="margin-top:10px"><strong>Tip:</strong> Input fuselage mass WITHOUT wings/tail. Leave speeds empty for preset defaults.</div>
+    <div class="tip" style="margin-top:10px"><strong>Tip:</strong> Input fuselage mass WITHOUT wings/tail. Leave speeds empty for mass-scaled defaults. Good designs cruise at 1.8&ndash;2.5&times; stall speed.</div>
   </div>
   <div class="results" id="results"></div>
 </div>
@@ -133,6 +140,23 @@ const P={
   lgBlkMass:500, sgBlkMass:20,
   lgRotor:1856, sgRotor:868.6,
   lgHinge:1511, sgHinge:310.2,
+  // Control surface size class threshold (span cells). Small surfaces use 1
+  // rotor+hinge pair = 2 main-grid cells removed from lift. Large use 2 pairs
+  // = 4 cells. Rotor/hinge bases are functional blocks → NOT armor/panel →
+  // fail BlockClassifier.IsArmorOrPanel() → cells are not lifting cells.
+  ctrlLargeSpanThresh:8,
+  // Wing-mounted thruster cell shadow (footprint + clearance loss from lift).
+  // A thruster is a functional block (not armor/panel) AND its exhaust clearance
+  // breaks the 3/5-cell above/below clearance requirement for surrounding wing
+  // cells. Large grid: small thruster ≈ 1×1×2 → 2 cells; large thruster 3×3×3 → 8.
+  // Small grid: small thruster 1 cell; large thruster 3×3×3 → 4.
+  thrusterShadowLG:{small:2, large:8},
+  thrusterShadowSG:{small:1, large:4},
+  // Target cruise L/D — used as an optimization target (not just a floor).
+  ldCruiseTarget:8,
+  // Ideal cruise CL/CLmax ratio for efficient flight. Below 0.15 means wing is
+  // over-sized (poor L/D); above 0.55 means cruise too close to stall.
+  idealCruiseCLRatio:0.30,
   oswaldE:0.85, skinCD:0.004, crossflowK:0.10,
   camberBoostK:2.0,
   stripCamberBoostK:0.95,
@@ -206,7 +230,19 @@ const P={
     return Math.max(Math.min(0.92/(1+0.14*Math.pow(fr,1.2)),0.92),0.08);
   },
   // Cm_ac from camber (thin-airfoil with PAR's slope-LE calibration)
-  cmAc(camRad){ return -this.cmCoeff * camRad; }
+  cmAc(camRad){ return -this.cmCoeff * camRad; },
+  // Main-grid cells disqualified from lift by one control surface's hinge line.
+  // Small surface (span<thresh): 1 pair = 2 cells. Large: 2 pairs = 4 cells.
+  mechCellsForSurface(spanBlk){
+    return spanBlk>=this.ctrlLargeSpanThresh ? 4 : 2;
+  },
+  // Mass-scaled default stall speed. SE aircraft weigh ~3× real equivalents
+  // so real-world Vs=65 m/s at 75t translates to ~110 m/s in SE. Clamped to
+  // a reasonable band.
+  defaultStallForMass(massKg){
+    const t=massKg/1000;
+    return Math.max(30, Math.min(100, 30 + 4*Math.sqrt(t)));
+  }
 };
 
 // =====================================================================
@@ -315,22 +351,25 @@ function computeTargetWingCamber(W,S,rho,cruiseSpd,aAR){
   return 2*alphaEffDeg*Math.PI/180;
 }
 
+// Preset defaultStall is a FLOOR — actual stall scales with aircraft mass via
+// P.defaultStallForMass() when the user doesn't explicitly override. Cruise
+// defaults are relative to that stall (≈1.8-2.5× for efficient designs).
 const PRESETS={
   standard:{
     name:"Standard / Balanced",
     desc:"Stable, efficient all-purpose aircraft",
-    defaultStall:50, defaultCruise:85, targetAR:6,
+    defaultStall:50, defaultCruise:100, targetAR:6,
     hTailFrac:0.22,
-    aileronSpanFrac:0.35,  // fraction of half-span
+    aileronSpanFrac:0.35,
     flapSpanFrac:0.45,
-    ctrlChordFrac:0.28,    // fraction of total chord
+    ctrlChordFrac:0.28,
     elevChordFrac:0.35, rudderChordFrac:0.35,
     camberType:"half",
   },
   vtol:{
     name:"Short Takeoff / Low Speed",
     desc:"Large wings for low stall speed, STOL capable",
-    defaultStall:42, defaultCruise:65, targetAR:5,
+    defaultStall:42, defaultCruise:80, targetAR:5,
     hTailFrac:0.18,
     aileronSpanFrac:0.30, flapSpanFrac:0.50,
     ctrlChordFrac:0.30,
@@ -340,7 +379,7 @@ const PRESETS={
   fighter:{
     name:"Agile / Fighter",
     desc:"Small wings, high speed, aggressive handling",
-    defaultStall:70, defaultCruise:120, targetAR:4,
+    defaultStall:75, defaultCruise:160, targetAR:4,
     hTailFrac:0.20,
     aileronSpanFrac:0.40, flapSpanFrac:0.35,
     ctrlChordFrac:0.25,
@@ -368,8 +407,25 @@ function calculate(){
   const streamF=1.0-0.9*fStr;
   const flaps=document.getElementById('includeFlaps').checked;
   const twinFin=document.getElementById('twinFin').checked;
-  const tgtStall=parseFloat(document.getElementById('targetStall').value)||pr.defaultStall;
-  const tgtCruise=parseFloat(document.getElementById('targetCruise').value)||0;
+  const wingThrustCount=2*Math.max(0,parseInt(document.getElementById('wingThrusters').value)||0); // total (both sides)
+  const wingThrustSize=document.getElementById('wingThrusterSize').value; // 'small' or 'large'
+  const thrusterShadowPer=isSmall
+    ? P.thrusterShadowSG[wingThrustSize]
+    : P.thrusterShadowLG[wingThrustSize];
+  const wingThrusterLoss=wingThrustCount*thrusterShadowPer;
+
+  // Default stall scales with mass; override by preset if user-input is blank
+  // and the preset default is *below* what mass would suggest (so heavy
+  // aircraft don't try to land at 50 m/s).
+  const massScaledStall=P.defaultStallForMass(fm);
+  const tgtStallRaw=parseFloat(document.getElementById('targetStall').value);
+  const tgtStall=!isNaN(tgtStallRaw) && tgtStallRaw>0
+    ? tgtStallRaw
+    : Math.max(pr.defaultStall, massScaledStall);
+  const userStallProvided=!isNaN(tgtStallRaw) && tgtStallRaw>0;
+  const tgtCruiseRaw=parseFloat(document.getElementById('targetCruise').value);
+  const tgtCruise=!isNaN(tgtCruiseRaw) && tgtCruiseRaw>0 ? tgtCruiseRaw : 0;
+  const userCruiseProvided=tgtCruise>0;
 
   const fLm=fL*cell, fWm=fW*cell, fHm=fH*cell;
   const fFrontal=fWm*fHm;
@@ -397,7 +453,20 @@ function calculate(){
   let iterSw=Math.max(5,tm/500);                           // rough Sw seed for target-camber calc
   let iterWingBlocks=null;
   let prevTm=0; // for convergence early-exit
-  for(let it=0;it<12;it++){
+  let prevFinMult=1.0, prevHTailOv=pr.hTailFrac, prevTailBump=0;
+
+  // --- Stability auto-fix state (carried across iterations) ---
+  // The designer grows tail/fin when metrics are bad instead of just warning.
+  // finSizeMult grows if post-quantization β > target.
+  // hTailFracOverride grows when Vh < 0.30 target.
+  // tailChordBump adds blocks to tail chord if Cm trim can't be achieved.
+  let finSizeMult=1.0;
+  let hTailFracOverride=pr.hTailFrac;
+  let tailChordBump=0;
+  // Track whether stability caps were hit (for warnings)
+  let stabHTailCapped=false, stabFinCapped=false, stabTailChordCapped=false;
+
+  for(let it=0;it<15;it++){
     const W=tm*P.g;
 
     // Step 1: compute the target wing camber for neutral V_z at α=0° cruise,
@@ -416,37 +485,54 @@ function calculate(){
     let flapWeightedBoost=flaps?1+(flapClBoost-1)*flapAreaFrac:1;
     let clMaxEst=P.clMaxEff(camEst,arPhys)*flapWeightedBoost;
 
-    // Wing area from stall speed (total planform including ctrl surfaces)
-    let SwStall=2*W/(P.rho*tgtStall*tgtStall*clMaxEst);
+    // Effective-lift-fraction estimate (effective_area / total_planform).
+    // At this point we don't know exact ctrl-surface dimensions yet, so we
+    // estimate: thruster loss is known, plus ~8 cells for 2 ail hinges +
+    // 2 subgrid mounts (rough average). Refined below after block quantization.
+    let liftEffFracEst=Math.max(0.5,
+      1 - (wingThrusterLoss*cellA + 8*cellA) / Math.max(iterSw, cellA));
 
-    // Wing area from cruise speed
+    // Wing area from stall speed (planform including ctrl, before mech/thruster losses)
+    // Grossed up so the EFFECTIVE lift area meets the target.
+    let SwStall=2*W/(P.rho*tgtStall*tgtStall*clMaxEst) / liftEffFracEst;
+
+    // Wing area from cruise speed — sized so CL at cruise equals idealCruiseCLRatio × CLmax.
+    // This targets a realistic cruise-CL rather than sizing at max-cruise-AoA.
     let SwCruise=0;
     if(tgtCruise>0){
-      let maxCrAoA=Math.max(P.stallOnsetDeg-camEst*0.5*57.2958-3, 2); // strip half-camber
-      let clCr=P.clEff(maxCrAoA,camEst,arPhys);
-      if(clCr>0.01) SwCruise=2*W/(P.rho*tgtCruise*tgtCruise*clCr);
+      let clCruiseTarget=clMaxEst*P.idealCruiseCLRatio;
+      if(clCruiseTarget>0.01) SwCruise=2*W/(P.rho*tgtCruise*tgtCruise*clCruiseTarget) / liftEffFracEst;
     }
+    // Dual-target blend: stall is the hard safety constraint, cruise optimizes L/D.
+    // Take the larger (meeting stall implies cruise can be faster than target at
+    // higher α; meeting cruise-opt implies stall is lower than target).
     let Sw=Math.max(SwStall,SwCruise);
 
-    // L/D floor: if cruise L/D would be below 3, increase wing area.
+    // L/D optimizer: aim for cruise L/D ≥ ldCruiseTarget by growing the wing.
     // Larger wings → lower cruise AoA → lower profile drag → better L/D.
-    // Estimate non-wing drag (form + skin) to check L/D before quantization.
+    // This is an OPTIMIZATION target, not just a floor — the designer actively
+    // pursues efficient designs. Capped by fuselage-proportion constraint below.
     {
       let crSpd=tgtCruise>0?tgtCruise:Math.max(Math.sqrt(2*W/(P.rho*Sw*Math.max(clMaxEst,0.3)))*1.6,pr.defaultCruise);
       let qEst=0.5*P.rho*crSpd*crSpd;
-      // Rough non-wing drag: form + skin (doesn't depend on wing area)
+      // Non-wing drag: fuselage form + fuselage skin. Does NOT include tail/fin
+      // LE silhouette (H-tail LE filtered by FilterWingEdgePanels, V-fin LE
+      // produces drag via the per-panel CL/CD path at 90° alpha — see main
+      // drag breakdown below).
       let eqF=isSmall?0.2:0.35;
-      let gFront=fFrontal*(1+eqF)+6*cellA; // fuselage + ~tail/fin edges
-      let gLen=fLm+fLm*0.55+4*cell;
+      let gFront=fFrontal*(1+eqF); // fuselage only (tail/fin are lifting cells)
+      let gLen=fLm+fLm*0.55;
       let gDia=2*Math.sqrt(gFront/Math.PI);
       let gFR=gDia>0.01?gLen/gDia:1;
       let gCD=Math.max(0.1,Math.min(0.92,0.92/(1+0.14*gFR)));
-      let dNonWing=qEst*gFront*gCD*streamF + qEst*2*(fWm+fHm)*fLm*P.skinCD*0.6;
-      // Iteratively increase Sw if L/D < 3
-      for(let li=0;li<8;li++){
-        let clN=W/(qEst*Sw);
-        let aEst=P.clEff(2,camEst,arPhys)>0.01 ? clN / (P.clEff(1,camEst,arPhys)/1) : 4;
-        // Find alpha for this CL
+      let dNonWing=qEst*gFront*gCD*streamF + qEst*2*(fWm+fHm)*fLm*P.skinCD*0.7;
+      // Iteratively increase Sw if L/D < ldCruiseTarget (8). Accounts for wing-mass
+      // feedback by tracking growing wing mass across inner iterations.
+      let SwPrev=Sw;
+      let wingMassAdd=0;
+      for(let li=0;li<10;li++){
+        let Weff=W+wingMassAdd*P.g;
+        let clN=Weff/(qEst*Sw);
         let aSrch=null;
         for(let ad=0.5;ad<=P.stallOnsetDeg;ad+=0.5){
           if(P.clEff(ad,camEst,arPhys)>=clN){aSrch=ad;break;}
@@ -454,13 +540,29 @@ function calculate(){
         if(aSrch===null) break; // past stall, can't help
         let cdEst=P.cdEff(aSrch,camEst,arPhys);
         let dWingEst=qEst*Sw*cdEst;
-        // Tail/fin skin drag scales with wing area
         let htA=Sw*pr.hTailFrac;
         let dTailEst=qEst*htA*(2*P.skinCD+0.002) + qEst*4*cellA*2*P.skinCD;
         let dTot=dWingEst+dNonWing+dTailEst;
-        let ldEst=W/dTot;
-        if(ldEst>=3.0) break;
-        Sw*=1.15; // grow 15% per iteration
+        let ldEst=Weff/dTot;
+        if(ldEst>=P.ldCruiseTarget) break;
+        // Grow wing; track added mass for feedback
+        let growFactor=1.10;
+        let addedArea=Sw*(growFactor-1);
+        wingMassAdd+=addedArea/cellA*bm; // cells added × block mass
+        Sw*=growFactor;
+      }
+    }
+
+    // Fuselage-proportion cap: full wingspan ≤ 2.2× fuselage length,
+    // chord ≤ 0.6× fuselage length. Prevents wing from eating the whole
+    // airplane for unrealistic stall targets.
+    let wingCappedByFuselage=false, wingRequestedSw=Sw;
+    {
+      let maxSpanM=fLm*2.2, maxChordM=fLm*0.6;
+      let maxSwFromFuse=maxSpanM*maxChordM;
+      if(Sw>maxSwFromFuse){
+        wingCappedByFuselage=true;
+        Sw=maxSwFromFuse;
       }
     }
 
@@ -488,9 +590,18 @@ function calculate(){
     // left and right wings are separate groups that don't cross the fuselage)
     let aAR=Math.max(0.5,Math.min(20, hsBlk/chordBlk));
     arPhys=aAR;
-    // Re-query block recommendation now that we have the final quantized chord for
-    // THIS iteration — gives a tighter camber estimate than the pre-iteration guess.
-    const targetCamFinal=computeTargetWingCamber(W,aSw,P.rho,cruiseSpdForCam,arPhys);
+    // Pre-compute control-surface span rough estimates so we can estimate mech
+    // losses for a better camber target. Actual dimensions quantized just
+    // below — this estimate is only for camber block selection.
+    const ailSpanEst=Math.max(1,Math.round(hsBlk*pr.aileronSpanFrac));
+    const flapSpanEst=flaps?Math.max(1,Math.round(hsBlk*pr.flapSpanFrac)):0;
+    const estMechLoss=2*P.mechCellsForSurface(ailSpanEst)+(flaps?2*P.mechCellsForSurface(flapSpanEst):0);
+    const aSwEffEst=Math.max(cellA, (wTotalBlk-2*estMechLoss-wingThrusterLoss)*cellA);
+
+    // Re-query block recommendation now that we have the final quantized chord
+    // for THIS iteration — tighter camber estimate than the pre-iteration guess.
+    // Use EFFECTIVE lift area since PAR applies CL per-effective-area.
+    const targetCamFinal=computeTargetWingCamber(W,aSwEffEst,P.rho,cruiseSpdForCam,arPhys);
     iterWingBlocks=recommendCamberBlocks(targetCamFinal,chordBlk,false);
     let camRad=iterWingBlocks.achievedCamber;
 
@@ -510,41 +621,75 @@ function calculate(){
       flTot=2*flSBlk*flCBlk;
     }
 
-    // Structural wing blocks = total wing - control surfaces
-    // (filler blocks where ctrl surfaces sit on subgrids)
-    let wStructBlk=wTotalBlk; // all blocks are main grid (ctrl surfaces are separate subgrids)
+    // ---- Mechanical + thruster cell subtraction from lift area ----
+    // Rotor/hinge base blocks sit on the MAIN GRID (they attach the subgrid).
+    // These are functional blocks — fail BlockClassifier.IsArmorOrPanel() —
+    // so the main-grid cells they occupy are NOT lift cells.
+    //   Small ctrl surface (span<8 blocks): 1 pair = 2 cells lost
+    //   Large ctrl surface (span≥8 blocks): 2 pairs = 4 cells lost
+    // Similarly the control surface's SUBGRID loses the hinge-top mounts.
+    const mechAilMain=P.mechCellsForSurface(ailSBlk)*2; // 2 ailerons
+    const mechFlapMain=flaps?P.mechCellsForSurface(flSBlk)*2:0;
+    const wingMechLoss=mechAilMain+mechFlapMain+wingThrusterLoss;
+    // Subgrid mount losses (same count — hinge occupies one cell on each side)
+    const mechAilSub=P.mechCellsForSurface(ailSBlk)*2;
+    const mechFlapSub=flaps?P.mechCellsForSurface(flSBlk)*2:0;
 
-    // H-tail: total chord includes elevator (flush)
-    let hTA=aSw*pr.hTailFrac;
-    let htTargetAR=4;
+    // Structural wing blocks = total wing - control surfaces (on subgrid)
+    // Effective wing-lift cells = total - mech losses - thruster losses
+    // - (subgrid ctrl cells lost to hinge mounts)
+    let wStructBlk=wTotalBlk-ailTot-flTot; // main-grid cells (incl. mech losses)
+    let wLiftCells=Math.max(1, wTotalBlk - wingMechLoss - mechAilSub - mechFlapSub);
+    let aSwEff=wLiftCells*cellA; // effective lift area
+
+    // H-tail: sized to hit target Vh ≥ 0.40 (middle of good range 0.30–0.70).
+    // hTailFrac is dynamic — uses max(preset, computed from wing chord + tail arm).
+    // Capped at 0.45 (beyond which tail is disproportionately large).
+    // Also grown by stability fix-up when Vh was low in previous iteration.
+    const vhTarget=0.40;
+    // S_ht_eff/S_w_eff × L_t/c_w = Vh. S_ht_eff ≈ hTailFrac × S_w × (loss_factor).
+    // Approximate: hTailFrac_needed ≈ vhTarget × c_w / L_t × 1.10 (10% buffer for mech loss).
+    const hTailFracNeeded=Math.min(0.45, vhTarget*aChord/tailArm*1.10);
+    const hTailFrac=Math.max(pr.hTailFrac, hTailFracNeeded, hTailFracOverride);
+    if(hTailFracNeeded>=0.45) stabHTailCapped=true;
+    let hTA=aSwEff*hTailFrac;
+    let htTargetAR=Math.max(2, Math.min(6, 0.75*aAR+1));
     let htSpanM=Math.sqrt(htTargetAR*hTA), htChordM=hTA/htSpanM;
     let htHsBlk=Math.max(2,Math.round(htSpanM/2/cell));
-    let htTotalCBlk=Math.max(2,Math.round(htChordM/cell));
+    // Tail chord — apply tailChordBump if Cm trim required longer chord
+    let htTotalCBlk=Math.max(2,Math.round(htChordM/cell)+tailChordBump);
     let elCBlk=Math.max(1,Math.round(htTotalCBlk*pr.elevChordFrac));
     let htStructCBlk=Math.max(1,htTotalCBlk-elCBlk);
     let htBlk=2*htHsBlk*htTotalCBlk; // total H-tail blocks (struct + elevator space)
     let aHTa=htBlk*cellA;
-    // H-tail AR (half-tail, same as wing logic)
-    let htAR=Math.max(0.5,Math.min(20, htHsBlk/htTotalCBlk));
     let elSBlk=htHsBlk*2; // elevator spans full tail
     let elBlk=elSBlk*elCBlk;
+    // Mechanical loss at elevator hinge line (main grid) + subgrid mount loss
+    const mechElevMain=P.mechCellsForSurface(elSBlk);
+    const mechElevSub=P.mechCellsForSurface(elSBlk);
+    let htLiftCells=Math.max(1, htBlk - mechElevMain - mechElevSub);
+    let aHTaEff=htLiftCells*cellA;
+    // H-tail AR (half-tail) — use effective lift cells for AR group
+    let htAR=Math.max(0.5,Math.min(20, htHsBlk/htTotalCBlk));
 
     // Vertical fin: sized from target sideslip in 20° bank
     // Reverse: S_fin = W*sin(bank) / (q_cruise * a_fin * beta_target)
-    // a_fin = 2 * 6.02 * finAR/(finAR+2), assume finAR≈2 initially → a_fin≈6.02
     let finCount=twinFin?2:1;
     let betaTarget=8*Math.PI/180; // 8° = "GOOD" threshold
     let clMaxEst2=P.clMaxEff(camRad,aAR)*flapWeightedBoost;
-    let stallEst=Math.sqrt(2*W/(P.rho*aSw*Math.max(clMaxEst2,0.3)));
+    let stallEst=Math.sqrt(2*W/(P.rho*aSwEff*Math.max(clMaxEst2,0.3)));
     let cruiseEst=tgtCruise>0?tgtCruise:Math.max(stallEst*1.6,pr.defaultCruise);
     let qCrEst=0.5*P.rho*cruiseEst*cruiseEst;
     let finARguess=2.0; // sqrt(2*A)/sqrt(A/2) = 2
     let aFinGuess=2*6.02*finARguess/(finARguess+2); // ≈6.02
     let sFinReq=W*Math.sin(20*Math.PI/180)/(qCrEst*aFinGuess*betaTarget);
-    let sFinPer=Math.max(sFinReq/finCount, 4*cellA); // min 2×2 blocks
+    // Apply finSizeMult from stability fix-up (grows if previous-iteration β > target)
+    let sFinPer=Math.max(sFinReq/finCount, 4*cellA)*finSizeMult;
     let vfHM=Math.sqrt(2*sFinPer), vfCM=sFinPer/vfHM; // AR≈2 shape
-    let vfHBlk=Math.max(2,Math.round(vfHM/cell));
-    let vfTotalCBlk=Math.max(2,Math.round(vfCM/cell));
+    // Use CEIL instead of round to guarantee the quantized fin is ≥ target
+    // size (Math.round can undersize by up to 50%, pushing β above the 8° target).
+    let vfHBlk=Math.max(2,Math.ceil(vfHM/cell));
+    let vfTotalCBlk=Math.max(2,Math.ceil(vfCM/cell));
     let rdCBlk=Math.max(1,Math.round(vfTotalCBlk*pr.rudderChordFrac));
     let vfStructCBlk=Math.max(1,vfTotalCBlk-rdCBlk);
     let vfBlkSingle=vfHBlk*vfTotalCBlk;
@@ -553,6 +698,18 @@ function calculate(){
     let rdHBlk=vfHBlk;
     let rdBlkSingle=rdHBlk*rdCBlk;
     let rdBlk=rdBlkSingle*finCount;
+    // V-fin mech losses (rudder per fin); fin LE silhouette for drag model
+    const mechRudMainPerFin=P.mechCellsForSurface(rdHBlk);
+    const mechRudSubPerFin=P.mechCellsForSurface(rdHBlk);
+    let vfLiftCells=Math.max(1, vfBlk - finCount*(mechRudMainPerFin+mechRudSubPerFin));
+    let aVFaEff=vfLiftCells*cellA;
+    // Fin leading edge silhouette. PAR keeps ±Z normals on vertical lift
+    // surfaces as lifting panels (FilterWingEdgePanels), so the fin LE gets
+    // CD0(90°) ≈ 1.2 via the per-panel path at 90° α. AeroComputer forces
+    // effStreamlining → 1.0 at 90° α, so area reduction (slope blocks) is
+    // the only way to lower this drag. Assuming recommended slope-LE build
+    // where the slope's forward face area = 0.5 × cellA.
+    let vfLESilhouette=finCount*vfHBlk*cellA*0.5;
 
     // Number of control surface subgrids: 2 ail + 1 elev + fin(s) rudder + (2 flaps)
     let nCtrl=2+1+finCount+(flaps?2:0);
@@ -565,38 +722,97 @@ function calculate(){
 
     R={cell,cellA,bm,isSmall,mechPer,fm,tm,sW,mechW,sBlk,
        fLm,fWm,fHm,fL,fW,fH,fFrontal,streamF,tailArm,
-       wTotalBlk,wStructBlk,hsBlk,chordBlk,structCBlk,ctrlCBlk,aSpan,aChord,aSw,aAR,camRad,camBase,camType:pr.camberType,
-       htBlk,htHsBlk,htTotalCBlk,htStructCBlk,htAR,aHTa,
-       vfBlk,vfBlkSingle,vfHBlk,vfTotalCBlk,vfStructCBlk,aVFa,finCount,twinFin,
+       wTotalBlk,wStructBlk,hsBlk,chordBlk,structCBlk,ctrlCBlk,aSpan,aChord,aSw,aSwEff,aAR,camRad,camBase,camType:pr.camberType,
+       htBlk,htHsBlk,htTotalCBlk,htStructCBlk,htAR,aHTa,aHTaEff,hTailFracActive:hTailFrac,
+       vfBlk,vfBlkSingle,vfHBlk,vfTotalCBlk,vfStructCBlk,aVFa,aVFaEff,vfLESilhouette,finCount,twinFin,finSizeMult,
        ailEach,ailTot,ailSBlk,ailCBlk,
        elBlk,elSBlk,elCBlk,
        rdBlk,rdBlkSingle,rdHBlk,rdCBlk,
        flTot,flSBlk,flCBlk,flaps,nCtrl,
+       wLiftCells,wingMechLoss,wingThrusterLoss,wingThrustCount,wingThrustSize,thrusterShadowPer,
+       wingCappedByFuselage,wingRequestedSw,userStallProvided,userCruiseProvided,massScaledStall,
+       stabHTailCapped,stabFinCapped,stabTailChordCapped,tailChordBump,
        pr,tgtStall,flapWeightedBoost};
 
-    // Feed this iteration's geometry back to the top of the loop for next pass's
-    // target-camber and block-recommendation calls.
+    // ---- Stability fix-up: check metrics and grow undersized pieces ----
+    // Computes post-quantization β, Vh, and Cm residual. If bad, set override
+    // state so the NEXT iteration grows the offending surface. Caps prevent
+    // runaway growth; if hit, warnings report impossibility.
+    {
+      // Post-quantization sideslip (predicts what final β will be at cruise)
+      const cruiseSpdFix=tgtCruise>0?tgtCruise:Math.max(stallEst*1.8,pr.defaultCruise);
+      const qFix=0.5*P.rho*cruiseSpdFix*cruiseSpdFix;
+      const finARactual=vfHBlk/Math.max(1,vfTotalCBlk);
+      const aFinActual=2*6.02*finARactual/(finARactual+2);
+      const fuseSideFix=fLm*fHm;
+      const sidePerRadFix=aVFaEff*aFinActual+fuseSideFix*P.crossflowK;
+      const betaActual=sidePerRadFix>0.01
+        ? W*Math.sin(20*Math.PI/180)/(qFix*sidePerRadFix) : 999;
+      // Grow fin if β > 8° (target) with small hysteresis band
+      if(betaActual>8*Math.PI/180+0.01 && finSizeMult<3.5){
+        finSizeMult*=1.15;
+        stabFinCapped=finSizeMult>=3.4;
+      }
+
+      // Vh post-quantization
+      const vhActual=aHTaEff*tailArm/(aSwEff*aChord);
+      if(vhActual<0.28 && hTailFracOverride<0.45){
+        // Grow H-tail fraction for next iteration
+        hTailFracOverride=Math.min(0.45, hTailFracOverride*1.10 + 0.02);
+        stabHTailCapped=hTailFracOverride>=0.44;
+      }
+
+      // Cm trim residual — see if the tail chord supports the needed reflex
+      const cmAcFix=P.cmAc(camRad);
+      const wingLiftCmFix=0.10*(W/(qFix*aSwEff)); // approx with SM=0.15
+      const trimDenom=(aHTaEff/aSwEff)*(tailArm/aChord);
+      const tailClNeeded=trimDenom>0.01?(cmAcFix+wingLiftCmFix)/trimDenom:0;
+      const tailARfix=htHsBlk/Math.max(1,htTotalCBlk);
+      const tailClSlope=2*Math.PI*P.arCorr(tailARfix);
+      // Achievable with max block combination at current chord
+      const edgeFrac=1/Math.sqrt(Math.max(1,htTotalCBlk));
+      const maxAchievableTailCam=edgeFrac*P.camFull; // LE full + TE inv full (both sign-aligned)
+      const tailGeoAlpha=0.035; // ~2° post-downwash
+      const maxAchievableTailCL=tailClSlope*(tailGeoAlpha+0.5*maxAchievableTailCam);
+      if(Math.abs(tailClNeeded)>maxAchievableTailCL*1.1 && tailChordBump<4){
+        tailChordBump+=1;
+        stabTailChordCapped=tailChordBump>=4;
+      }
+    }
+
+    // Feed this iteration's geometry back to the top of the loop. iterSw is
+    // TOTAL planform (used for gross-up ratios); liftEffFracEst computed
+    // inline from wingThrusterLoss + mech-loss estimate.
     iterChordBlk=chordBlk;
     iterSw=aSw;
 
-    // Convergence early-exit: break when mass estimate stabilizes (< 5 kg change)
-    // AND wing chord block count has settled. Typically converges in 3-5 passes.
-    if(it>=2&&Math.abs(tm-prevTm)<5&&iterChordBlk===chordBlk) break;
+    // Convergence early-exit: break when mass AND chord AND stability have
+    // settled. Needs to include stability state (finSizeMult, hTailFracOverride,
+    // tailChordBump) so we don't exit mid-fix-up.
+    const stabConverged=(finSizeMult===prevFinMult)&&(hTailFracOverride===prevHTailOv)&&(tailChordBump===prevTailBump);
+    if(it>=3 && Math.abs(tm-prevTm)<5 && iterChordBlk===chordBlk && stabConverged) break;
     prevTm=tm;
+    prevFinMult=finSizeMult;
+    prevHTailOv=hTailFracOverride;
+    prevTailBump=tailChordBump;
   }
   // Save the final recommendation from the converged iteration
   R.wingBlocks=iterWingBlocks;
   R.wingCamberAchievedRad=iterWingBlocks?iterWingBlocks.achievedCamber:R.camRad;
-  R.targetWingCamberRad=computeTargetWingCamber(R.tm*P.g,R.aSw,P.rho,
+  R.targetWingCamberRad=computeTargetWingCamber(R.tm*P.g,R.aSwEff,P.rho,
     tgtCruise>0?tgtCruise:pr.defaultCruise,R.aAR);
 
   // ---- Performance ----
   const W=R.tm*P.g, rho=P.rho;
-  const totalLA=R.aSw; // total wing planform (ctrl surfaces are flush within)
+  // totalLA = EFFECTIVE lift area (total planform minus mechanical cells and
+  // thruster-shadow cells). This is the area that actually produces lift in PAR,
+  // matching what BlockClassifier.IsArmorOrPanel + the 1-thick + clearance gates
+  // leave after rotor/hinge bases and wing-mounted thrusters are placed.
+  const totalLA=R.aSwEff;
   R.totalLiftArea=totalLA;
   R.clMax=P.clMaxEff(R.camRad,R.aAR)*R.flapWeightedBoost;
   R.stallSpd=Math.sqrt(2*W/(rho*totalLA*R.clMax));
-  R.stallGeoA=P.stallOnsetDeg-R.camRad*0.5*57.2958; // strip half-camber: stall at 16° eff = geo + 0.5*cam
+  R.stallGeoA=P.stallOnsetDeg-R.camRad*0.5*57.2958; // strip half-camber
   R.tgtStall=tgtStall;
   R.tgtCruise=tgtCruise;
 
@@ -605,73 +821,114 @@ function calculate(){
     R.stallSpdClean=Math.sqrt(2*W/(rho*totalLA*clMaxClean));
   }
 
-  let cruiseSpd=tgtCruise>0?tgtCruise:Math.max(R.stallSpd*1.6,pr.defaultCruise);
+  let cruiseSpd=tgtCruise>0?tgtCruise:Math.max(R.stallSpd*1.8,pr.defaultCruise);
   R.cruiseSpd=cruiseSpd;
   let qCr=0.5*rho*cruiseSpd*cruiseSpd;
   let clNeed=W/(qCr*totalLA);
   R.clCruise=clNeed;
-
-  // Wing camber and block recommendation are already computed inside the main
-  // iteration (so wing area is sized against the ACHIEVED CLmax, not the preset's).
-  // R.camRad, R.wingBlocks, R.wingCamberAchievedRad, and R.targetWingCamberRad are
-  // already populated. Just compute cruise AoA with the final camber.
   R.cruiseAoA=findAlpha(clNeed,R.camRad,R.aAR);
 
   // Warnings
   R.warnings=[];
-  if(tgtCruise>0&&tgtCruise<=tgtStall) R.warnings.push('Cruise speed must be faster than stall speed!');
-  if(R.cruiseAoA===null) R.warnings.push('Cruise speed too slow — would require AoA beyond stall. Increase cruise speed or add more wing.');
-  else if(R.cruiseAoA>R.stallGeoA-2) R.warnings.push('Cruise AoA ('+R.cruiseAoA.toFixed(1)+'&deg;) is dangerously close to stall ('+R.stallGeoA.toFixed(1)+'&deg;). Increase cruise speed or wing area.');
-  if(R.stallSpd-tgtStall>3&&tgtStall>0) R.warnings.push('Stall speed '+R.stallSpd.toFixed(1)+' m/s exceeds target '+tgtStall+' m/s by '+(R.stallSpd-tgtStall).toFixed(1)+' m/s. Enlarge the wing, add camber, or raise target stall. (Lower stall than target is fine and not warned.)');
+  if(tgtCruise>0&&tgtCruise<=tgtStall)
+    R.warnings.push('Cruise speed must be faster than stall speed!');
+  if(R.cruiseAoA===null)
+    R.warnings.push('Cruise speed too slow — would require AoA beyond stall. Increase cruise speed or add more wing.');
+  else if(R.cruiseAoA>R.stallGeoA-2)
+    R.warnings.push('Cruise AoA ('+R.cruiseAoA.toFixed(1)+'&deg;) is dangerously close to stall ('+R.stallGeoA.toFixed(1)+'&deg;). Increase cruise speed or wing area.');
+  if(R.stallSpd-tgtStall>3&&tgtStall>0)
+    R.warnings.push('Stall speed '+R.stallSpd.toFixed(1)+' m/s exceeds target '+tgtStall+' m/s by '+(R.stallSpd-tgtStall).toFixed(1)+' m/s. Enlarge wing, add camber, raise target stall, or reduce fuselage mass.');
+
+  // ---- Stall/cruise ratio sanity warnings ----
+  if(tgtCruise>0 && tgtStall>0){
+    const ratio=tgtCruise/tgtStall;
+    if(ratio<1.25)
+      R.warnings.push('Cruise/stall ratio '+ratio.toFixed(2)+' is unrealistically tight. Real aircraft maintain Vc &ge; 1.3&times;Vs for maneuver margin. Either raise cruise speed or lower stall target.');
+    else if(ratio>3.5)
+      R.warnings.push('Cruise/stall ratio '+ratio.toFixed(2)+' is very wide &mdash; wing is oversized for the cruise speed. Lower stall target or raise cruise speed to improve efficiency.');
+  }
+  if(R.cruiseAoA!==null && tgtCruise>0){
+    const cruiseClRatio=R.clCruise/Math.max(R.clMax,0.01);
+    if(cruiseClRatio<0.12)
+      R.warnings.push('Cruise CL only '+(cruiseClRatio*100).toFixed(0)+'% of CLmax &mdash; wing is oversized, induced drag low but profile drag dominant. Consider a higher cruise target or smaller stall target.');
+  }
+
+  // Wing cap / user-input warnings
+  if(R.wingCappedByFuselage){
+    R.warnings.push('Wing size capped by fuselage proportions (max 2.2&times; fuselage length span, 0.6&times; chord). Actual stall '+R.stallSpd.toFixed(1)+' m/s exceeds target &mdash; lower fuselage mass or accept a higher stall speed.');
+  }
+  if(!R.userStallProvided && R.massScaledStall > pr.defaultStall + 3){
+    R.warnings.push('Default stall auto-scaled to '+Math.round(tgtStall)+' m/s for '+(R.fm/1000).toFixed(0)+'t fuselage mass (preset default '+pr.defaultStall+' m/s was unreasonably low at this weight).');
+  }
 
   // ---- Grid-level form drag (matches mod: SurfaceDetector + AeroComputer) ----
-  // The mod projects the ENTIRE grid's non-lifting cells onto each axis to get
-  // silhouette area, then applies fineness-ratio form drag.  Lifting cells
-  // (wing planform) are excluded — they have their own CL/CD model.
+  // The mod's ComputeUnifiedProjectedAreas excludes ALL lifting cells from
+  // the silhouette (LiftingCells ∪ VerticalLiftingCells). H-tail and V-fin
+  // planform cells are lifting cells → excluded. So form drag here covers
+  // only the fuselage + wing-mounted thrusters + (optional) equipment spill.
   //
-  // Estimate the forward (Z-axis) projected area of all non-lifting structure:
-  //  - Fuselage frontal: fW × fH blocks
-  //  - H-tail structure (non-lifting edges/structure): htHsBlk × 1 block thick per side
-  //  - V-fin structure: vfHBlk × 1 block thick per fin
-  //  - Equipment inside fuselage projecting beyond: ~20-40% of fuselage frontal
+  // H-tail leading edge: FilterWingEdgePanels strips ±X and ±Z normals on
+  // horizontal lift surfaces → H-tail LE contributes ZERO drag anywhere.
+  //
+  // V-fin leading edge: FilterWingEdgePanels KEEPS ±Z normals on vertical
+  // lift surfaces. At cruise (flight along -Z), fin LE panels see geoAlpha
+  // ≈ 90° and the CL/CD model gives CD0(90°) ≈ 1.2. Accounted separately
+  // below as dFinLE, NOT in gridFrontal.
   let equipFrac=isSmall?0.2:0.35; // large grid has bulkier equipment
-  let htEdgeArea=2*R.htHsBlk*1*cellA; // H-tail leading edge projection (1 block thick, both sides)
-  let vfEdgeArea=R.finCount*R.vfHBlk*1*cellA; // V-fin leading edge
-  let gridFrontal=(fFrontal*(1+equipFrac)+htEdgeArea+vfEdgeArea);
-  // Fineness ratio from full grid extent and projected area
-  let gridLen=fLm+tailArm+R.htTotalCBlk*cell; // total grid length estimate
+  let thrusterFrontal=0;
+  if(R.wingThrustCount>0){
+    // Each thruster presents ~1 cellA (small) to ~4 cellA (large) forward silhouette.
+    // Subgrid frontal — the thruster sits on the wing and its front face projects forward.
+    const thrustSilhouettePer=isSmall
+      ? (R.wingThrustSize==='large'?4*cellA:cellA)
+      : (R.wingThrustSize==='large'?9*cellA:cellA);
+    thrusterFrontal=R.wingThrustCount*thrustSilhouettePer;
+  }
+  let gridFrontal=(fFrontal*(1+equipFrac))+thrusterFrontal;
+  let gridLen=fLm+tailArm+R.htTotalCBlk*cell;
   let gridDiam=2*Math.sqrt(gridFrontal/Math.PI);
   let gridFR=gridDiam>0.01?gridLen/gridDiam:1;
   let gridFormCD=Math.max(0.1,Math.min(0.92,0.92/(1+0.14*gridFR)));
-  // Streamlining: fuselage portion uses user streamlining, tail/fin edges are slopes (~0.4)
-  let gridStream=(fFrontal*(1+equipFrac)*R.streamF + (htEdgeArea+vfEdgeArea)*0.4) / gridFrontal;
+  // Streamlining: fuselage portion uses user streamlining; thrusters are 0.7
+  // (PAR BlockClassifier AtmoThruster DragMultiplier).
+  let gridStream=((fFrontal*(1+equipFrac))*R.streamF + thrusterFrontal*0.7) / Math.max(gridFrontal,0.01);
   R.gridFrontal=gridFrontal;
   R.gridFormCD=gridFormCD;
   R.gridStream=gridStream;
+  R.thrusterFrontal=thrusterFrontal;
 
-  // ---- Fuselage wetted area skin friction (matches mod: non-lifting panel skin friction) ----
-  // The mod applies skinCD=0.004 to every non-lifting face, with 0.2× wake reduction
-  // on rear-facing panels. The fuselage has 4 long faces (top, bottom, left, right).
-  // Front and rear faces are covered by form drag. Approximate effective wetted area:
-  let fuseWettedArea=2*(fWm+fHm)*fLm; // perimeter × length (4 long sides)
-  let wakeReduction=0.6; // average: front-facing panels get 1.0, rear get 0.2
-  R.dFuseSkin=0; // computed per-speed below
+  // ---- V-fin leading edge drag (per-panel CD0(90°) via CL/CD model) ----
+  // Kept in mod as a lifting panel at ~90° α where CD0 saturates at 1.2.
+  // At 90°, PAR's effStreamlining override forces full CD regardless of block
+  // type — only face-area reduction (slope LE vs flat) reduces drag. The
+  // vfLESilhouette already incorporates the 0.5× area assumption for slopes.
+  R.dFinLE=0; // computed per-speed below using qCr
+
+  // ---- Fuselage wetted area skin friction ----
+  // Mod: skinCD=0.004 per non-lifting face, 0.2× on rear-facing panels.
+  // Fuselage has 4 long faces full + ~0.2× on the 2 end caps = effective 0.7.
+  let fuseWettedArea=2*(fWm+fHm)*fLm;
+  let wakeReduction=0.7;
+  R.dFuseSkin=0;
 
   // Drag at cruise
   let cdW=R.cruiseAoA!==null?P.cdEff(R.cruiseAoA,R.camRad,R.aAR):0.05;
   R.dWing=qCr*totalLA*cdW;
   R.dForm=qCr*gridFrontal*gridFormCD*gridStream;
   R.dFuseSkin=qCr*fuseWettedArea*P.skinCD*wakeReduction;
-  // H-tail at cruise produces trim downforce — estimate ~2 deg AoA skin friction + small induced
-  let htCdCruise=2*P.skinCD + 0.002; // skin friction both faces + small trim induced
-  R.dTail=qCr*R.aHTa*htCdCruise;
-  R.dFin=qCr*R.aVFa*2*P.skinCD;
-  R.dTot=R.dWing+R.dForm+R.dFuseSkin+R.dTail+R.dFin;
+  // H-tail at cruise (lifting panel; skin friction both faces + small trim induced)
+  let htCdCruise=2*P.skinCD + 0.002;
+  R.dTail=qCr*R.aHTaEff*htCdCruise;
+  // V-fin main surfaces: skin friction on both faces
+  R.dFin=qCr*R.aVFaEff*2*P.skinCD;
+  // V-fin leading edge: CD0(90°) × streamlining × qCr × LE silhouette
+  R.dFinLE=qCr*R.vfLESilhouette*P.cd0(90);
+  R.dTot=R.dWing+R.dForm+R.dFuseSkin+R.dTail+R.dFin+R.dFinLE;
   R.thrust=R.dTot;
   R.power=R.thrust*R.cruiseSpd;
   R.ldCr=W/R.dTot;
 
-  // Speed scan — uses totalLA consistently
+  // Speed scan — same drag decomposition as cruise
   R.bestLD=0;R.bestLDSpd=0;R.spdData=[];
   let mx=Math.min(cruiseSpd*2,350);
   for(let v=Math.max(R.stallSpd*0.7,5);v<=mx;v+=1){
@@ -680,13 +937,18 @@ function calculate(){
     let a=findAlpha(clN,R.camRad,R.aAR);
     if(a===null||a>P.stallOnsetDeg+2){R.spdData.push({v,d:NaN,ld:NaN,a:NaN});continue;}
     let cd=P.cdEff(a,R.camRad,R.aAR);
-    let dt=q*totalLA*cd+q*gridFrontal*gridFormCD*gridStream+q*fuseWettedArea*P.skinCD*wakeReduction+q*R.aHTa*htCdCruise+q*R.aVFa*2*P.skinCD;
+    let dt=q*totalLA*cd
+          +q*gridFrontal*gridFormCD*gridStream
+          +q*fuseWettedArea*P.skinCD*wakeReduction
+          +q*R.aHTaEff*htCdCruise
+          +q*R.aVFaEff*2*P.skinCD
+          +q*R.vfLESilhouette*P.cd0(90);
     let ld=W/dt;
     if(ld>R.bestLD){R.bestLD=ld;R.bestLDSpd=v;}
     R.spdData.push({v,d:dt,ld,a});
   }
 
-  R.wLoad=R.tm/R.aSw;
+  R.wLoad=R.tm/R.aSwEff; // wing loading uses effective lift area
   let nMax=R.clMax/Math.max(R.clCruise,0.01);
   R.maxBank=Math.acos(Math.min(1/nMax,1))*57.2958;
   R.clAbove=isSmall?5:3;
@@ -706,11 +968,11 @@ function calculate(){
     R.tailEffAoA=R.cruiseAoA!==null?Math.max(R.cruiseAoA-R.downwashDeg,0):0;
   }
 
-  // ---- Stability volume coefficients ----
-  // Horizontal tail volume: Vh = S_ht * l_t / (S_w * c_w)
-  R.Vh=R.aHTa*R.tailArm/(totalLA*R.aChord);
-  // Vertical tail volume: Vv = S_v * l_v / (S_w * b)
-  let vFinArea=R.aVFa; // total fin area (both fins if twin)
+  // ---- Stability volume coefficients (use EFFECTIVE lift areas everywhere) ----
+  // Horizontal tail volume: Vh = S_ht_eff * l_t / (S_w_eff * c_w)
+  R.Vh=R.aHTaEff*R.tailArm/(totalLA*R.aChord);
+  // Vertical tail volume: Vv = S_v_eff * l_v / (S_w_eff * b)
+  let vFinArea=R.aVFaEff; // effective fin area (both fins if twin, minus rudder mech loss)
   R.Vv=vFinArea*R.tailArm/(totalLA*R.aSpan);
 
   // ---- Neutral Point + CoG placement (longitudinal stability) ----
@@ -728,7 +990,7 @@ function calculate(){
     let dEpsDAlpha=2*wingCLa/(Math.PI*P.oswaldE*R.aAR) * distDecay;
     let downwashFactor=Math.max(0.1,1-dEpsDAlpha);
     // NP shift from wing AC (positive = aft), normalized by wing chord
-    let npShiftFracC=(R.aHTa/totalLA)*(R.tailArm/R.aChord)*(tailCLa/wingCLa)*downwashFactor;
+    let npShiftFracC=(R.aHTaEff/totalLA)*(R.tailArm/R.aChord)*(tailCLa/wingCLa)*downwashFactor;
     R.npFromLE=0.25+npShiftFracC; // neutral point as fraction of MAC from LE
     // Recommended CoG: 10-15% static margin gives stable but responsive aircraft
     R.cgRecommendedMin=Math.max(0.15, R.npFromLE-0.20); // 20% SM upper bound
@@ -758,7 +1020,7 @@ function calculate(){
     // Tail geometry for moment arm calculations
     const tailARfromChord=R.htHsBlk/Math.max(1,R.htTotalCBlk);
     const tailArmRatio=R.tailArm/R.aChord;
-    const tailAreaRatio=R.aHTa/totalLA;
+    const tailAreaRatio=R.aHTaEff/totalLA;
     const tailCLslope=2*Math.PI*P.arCorr(tailARfromChord); // per rad of α_eff
     // Tail's geometric AoA at cruise = aircraft AoA - downwash
     const tailAlphaGeoRad=R.cruiseAoA!==null?Math.max(0,R.cruiseAoA-R.downwashDeg)/57.2958:0;
@@ -791,23 +1053,17 @@ function calculate(){
   }
 
   // ---- Yaw stability: equilibrium sideslip in 20 deg bank ----
-  // Lateral weight component = W * sin(bank)
-  // Restoring side forces:
-  //   Fin:      q * S_fin * CL_alpha_fin * beta  (lifting surface, linear in beta)
-  //   Fuselage: q * S_side * CrossflowK * beta * (1-beta)  (crossflow, ~linear at small beta)
-  // CL_alpha for fin: from CL table slope (0-4 deg): 0.42/4 = 0.105/deg = 6.02/rad
-  // Apply AR correction and two-face: a_fin = 2 * 6.02 * finAR/(finAR+2) per rad
-  // Equilibrium: W*sin(bank) = q * (S_fin * a_fin + S_side * CrossflowK) * beta
+  // Matches PAR: fin uses CL slope × AR correction, fuselage uses crossflow K.
+  // Now uses aVFaEff (effective fin area, minus rudder-mech losses).
   {
     let bankRad=20*Math.PI/180;
-    let finAR=R.vfHBlk/R.vfTotalCBlk; // fin half-AR (single fin)
-    let a2d=6.02; // CL slope per rad from table
-    let aFinPerRad=2*a2d*finAR/(finAR+2); // both faces, AR corrected
+    let finAR=R.vfHBlk/R.vfTotalCBlk;
+    let a2d=6.02; // CL slope per rad from mod CL curve low-α
+    let aFinPerRad=2*a2d*finAR/(finAR+2);
     let qCruise=0.5*P.rho*R.cruiseSpd*R.cruiseSpd;
     let lateralW=W*Math.sin(bankRad);
-    // Fuselage side area for crossflow (estimated from fuselage dimensions)
-    let fuseSideArea=fLm*fHm; // length × height
-    let crossflowForcePerRad=fuseSideArea*P.crossflowK; // at small beta, (1-|r|)≈1
+    let fuseSideArea=fLm*fHm;
+    let crossflowForcePerRad=fuseSideArea*P.crossflowK;
     let totalSideForcePerRad=vFinArea*aFinPerRad+crossflowForcePerRad;
     let betaRad=qCruise*totalSideForcePerRad>0
       ? lateralW/(qCruise*totalSideForcePerRad) : 999;
@@ -817,27 +1073,70 @@ function calculate(){
     R.crossflowContrib=crossflowForcePerRad/(totalSideForcePerRad>0?totalSideForcePerRad:1)*100;
   }
 
-  // ---- Roll authority ----
-  // Aileron moment = q * S_ail * CL(15 deg deflection) * arm
-  // With relative AoA (40% effective): effective deflection = 15 * 0.4 = 6 deg
-  // CL at 6 deg ≈ 0.63 (from table), AR corrected, two faces
+  // ---- Roll authority (matches PAR control-surface physics) ----
+  // PAR path for a deflected aileron at 15° (standard max):
+  //   1. DeflectionCamber = defl × DeflectionCamberFactor × √(cf/c) via Glauert slotted-flap.
+  //      cf/c = aileron chord fraction = ctrlChordFrac ≈ 0.28.
+  //      For 15° (0.2618 rad): DeflCam = 0.2618 × 1.0 × √0.28 ≈ 0.139 rad.
+  //   2. Strip model inside clEff(): α_eff = α_geo + 0.5 × DeflCam. Passing
+  //      α_geo = 0 (aircraft not pitched, only aileron deflected) means clEff
+  //      applies the 0.5·DeflCam offset internally — do NOT pass the offset
+  //      here too or we'd double-count the half-camber.
+  //   3. Relative-AoA reduction (when an upstream wing exists): subtract
+  //      (1 - relativeAoAFraction) × deflection from α_geo. With α_geo=0,
+  //      the reduction clamps to 0.
+  //   4. CL_aileron = clEff(0, DeflCam, wing AR) — clEff handles the rest.
+  //   5. Rolling force per aileron = q × ailArea × CL.
   {
-    let ailDeflEff=6; // 15 deg * 0.4 relative AoA fraction
-    let ailCL=P.clEff(ailDeflEff,0,R.aAR); // uses wing AR (inherited by aileron)
-    let ailArea=R.ailEach*R.cellA; // one aileron area
-    let ailArm=(R.hsBlk-R.ailSBlk/2)*R.cell+R.fWm/2; // distance from centerline to aileron center
-    let qCruise=0.5*P.rho*R.cruiseSpd*R.cruiseSpd;
-    R.rollMoment=2*qCruise*ailArea*ailCL*ailArm; // both ailerons, opposing
+    const ailDeflRad=15*Math.PI/180;
+    const ailGlauert=P.deflCamberF*Math.sqrt(pr.ctrlChordFrac);
+    const ailDeflCam=ailDeflRad*ailGlauert;
+    // Correct call: α_geo=0, clEff adds half-camber internally.
+    const ailCL=P.clEff(0, ailDeflCam, R.aAR);
+    const ailArea=R.ailEach*R.cellA;
+    const ailArm=(R.hsBlk-R.ailSBlk/2)*R.cell+R.fWm/2;
+    const qCruise=0.5*P.rho*R.cruiseSpd*R.cruiseSpd;
+    R.rollMoment=2*qCruise*ailArea*ailCL*ailArm;
     R.rollMomentArm=ailArm;
+    R.ailDeflCamDeg=ailDeflCam*57.2958;
+    R.ailAlphaEffDeg=0.5*ailDeflCam*57.2958; // for display only
+    R.ailCL=ailCL;
   }
 
-  // ---- Stability warnings ----
-  if(R.Vh<0.25) R.warnings.push('Pitch stability marginal: H-tail volume Vh='+R.Vh.toFixed(2)+' (target 0.3\u20130.7). Increase tail area or tail arm.');
-  if(R.Vv<0.015) R.warnings.push('Yaw stability low: V-fin volume Vv='+R.Vv.toFixed(3)+' (target 0.02\u20130.05). Increase fin area or tail arm.');
-  if(R.sideslipDeg>15) R.warnings.push('Very high sideslip in 20\u00b0 bank: \u03b2='+R.sideslipDeg.toFixed(1)+'\u00b0. Consider larger vertical fin, twin fins, or longer tail arm.');
-  if(R.ldCr<3) R.warnings.push('Low cruise L/D ('+R.ldCr.toFixed(1)+'). Increase streamlining, lengthen fuselage, or reduce fuselage cross-section.');
-  if(R.staticMarginOptimal<0.05) R.warnings.push('Low static margin ('+(R.staticMarginOptimal*100).toFixed(1)+'%) even at optimal CoG. Tail too small for stable flight — increase H-tail area or tail arm.');
-  if(Math.abs(R.cmNetAchieved)>0.05) R.warnings.push('Residual pitch trim imbalance (\u0394Cm='+R.cmNetAchieved.toFixed(3)+') even with recommended tail camber. The target tail reflex ('+R.tailCamberForTrimDeg.toFixed(1)+'\u00b0) exceeds what block combinations can achieve — consider lengthening tail chord, adjusting CoG, or accepting elevator-up trim.');
+  // ---- Stability warnings (only when auto-fix couldn't solve) ----
+  // The designer has already grown the tail/fin/tail-chord when stability
+  // metrics were bad. These warnings only fire when a physical limit (fuselage
+  // length, tail-frac cap) prevents a solution — telling the user WHY.
+  if(R.Vh<0.25 || R.stabHTailCapped){
+    if(R.stabHTailCapped){
+      R.warnings.push('Pitch stability at fuselage limit: Vh='+R.Vh.toFixed(2)+'. Fuselage too short for wing chord &mdash; designer grew H-tail to '+(R.hTailFracActive*100).toFixed(0)+'% of wing area but can\u2019t reach Vh&ge;0.30. Lengthen fuselage, raise stall target (shrinks wing chord), or accept reduced pitch authority.');
+    } else {
+      R.warnings.push('Pitch stability marginal: Vh='+R.Vh.toFixed(2)+' below 0.25 floor despite auto-sizing &mdash; unusual configuration. Inspect tail/fuselage proportions.');
+    }
+  }
+  if(R.Vv<0.015 || R.stabFinCapped){
+    if(R.stabFinCapped){
+      R.warnings.push('Yaw stability at fin-growth limit: Vv='+R.Vv.toFixed(3)+'. Designer grew fin to '+R.finSizeMult.toFixed(1)+'&times; initial target but still can\u2019t hit &beta;&le;8&deg;. Enable twin fins, lengthen fuselage, or accept higher sideslip.');
+    } else {
+      R.warnings.push('Yaw stability marginal: Vv='+R.Vv.toFixed(3)+'. Auto-sized fin undershot &mdash; flag for investigation.');
+    }
+  }
+  if(R.sideslipDeg>10){
+    R.warnings.push('Sideslip in 20\u00b0 bank &beta;='+R.sideslipDeg.toFixed(1)+'&deg; exceeds 8&deg; target. Designer already '+(R.twinFin?'using twin fins':'')+(R.stabFinCapped?' and hit fin-growth cap':'')+'. '+(R.twinFin?'Lengthen fuselage or accept':'Enable twin fins or lengthen fuselage.'));
+  }
+  if(R.ldCr<5){
+    R.warnings.push('Cruise L/D '+R.ldCr.toFixed(1)+' below efficient target (&ge;'+P.ldCruiseTarget+'). '+(R.wingCappedByFuselage?'Wing capped by fuselage proportions &mdash; lengthen fuselage or lower stall target.':'Increase streamlining or reduce fuselage cross-section.'));
+  }
+  if(R.staticMarginOptimal<0.10){
+    R.warnings.push('Static margin '+(R.staticMarginOptimal*100).toFixed(1)+'% at optimal CoG is low &mdash; aircraft stable but responsive. Usually fine; if twitchy in pitch, move CoG forward.');
+  }
+  if(Math.abs(R.cmNetAchieved)>0.05){
+    if(R.stabTailChordCapped){
+      R.warnings.push('Pitch trim imbalance \u0394Cm='+R.cmNetAchieved.toFixed(3)+' persists despite designer extending tail chord to '+R.htTotalCBlk+' blocks (&plus;'+R.tailChordBump+' from geometric sizing). Required tail reflex exceeds achievable camber &mdash; use elevator trim or accept slight pitch bias.');
+    } else {
+      R.warnings.push('Pitch trim imbalance \u0394Cm='+R.cmNetAchieved.toFixed(3)+' with recommended tail camber. Auto-fix grew tail chord; verify in-game. Could also indicate CoG placement issue.');
+    }
+  }
 
   render(R);
 }
@@ -884,12 +1183,17 @@ function render(R){
       <div class="blk">${R.hsBlk*R.chordBlk}/side</div></div>
     <table>
       <tr><td>Total wing planform</td><td><strong>${R.wTotalBlk} blocks</strong></td><td>${f(R.aSw)} m\u00b2</td></tr>
+      <tr><td>Mechanical cells lost (rotor+hinge main+subgrid)</td><td>&minus;${R.wTotalBlk-R.wLiftCells-R.wingThrusterLoss} blocks</td><td>&minus;${f((R.wTotalBlk-R.wLiftCells-R.wingThrusterLoss)*R.cellA)} m\u00b2</td></tr>
+      ${R.wingThrusterLoss>0?`<tr><td>Thruster shadow (${R.wingThrustCount}&times; ${R.wingThrustSize})</td><td>&minus;${R.wingThrusterLoss} blocks</td><td>&minus;${f(R.wingThrusterLoss*R.cellA)} m\u00b2</td></tr>`:''}
+      <tr style="background:#1a3a2a"><td><strong>Effective lift area</strong></td><td><strong>${R.wLiftCells} blocks</strong></td><td><strong>${f(R.aSwEff)} m\u00b2</strong></td></tr>
       <tr><td>Main grid structural chord</td><td>${R.structCBlk} blocks</td><td>${f(R.structCBlk*R.cell)} m</td></tr>
       <tr><td>Control surface chord (subgrid)</td><td>${R.ctrlCBlk} blocks</td><td>${f(R.ctrlCBlk*R.cell)} m</td></tr>
       <tr><td>Full wingspan</td><td>${Math.round(R.aSpan/R.cell)} blocks</td><td>${f(R.aSpan)} m</td></tr>
       <tr><td>Half-wing AR (mod physics)</td><td colspan="2">${f(R.aAR,2)}</td></tr>
       <tr><td>Stall AoA (geometric)</td><td colspan="2">${f(R.stallGeoA)}\u00b0</td></tr>
     </table>
+    ${R.wingCappedByFuselage?`<div class="tip warn"><strong>Wing capped:</strong> requested ${f(R.wingRequestedSw)} m\u00b2 but fuselage-proportion cap limits to ${f(R.aSw)} m\u00b2. Consider lowering fuselage mass or raising stall target.</div>`:''}
+    ${R.wingThrusterLoss>0?`<div class="tip"><strong>Wing thrusters:</strong> ${R.wingThrustCount} &times; ${R.wingThrustSize} = ${R.wingThrusterLoss} lift cells lost. Thruster cells are functional blocks (not armor/panel), and their exhaust clearance disqualifies neighboring wing cells from the 1-thick + 3/5-clear gates.</div>`:''}
   </div>
 
   <div class="panel">
@@ -938,8 +1242,10 @@ function render(R){
       <div class="blk">${R.twinFin?R.vfBlkSingle+'/ea':R.vfBlk+' blk'}</div></div>
     <table>
       <tr><td>H-Tail planform</td><td><strong>${R.htBlk} blocks</strong></td><td>${f(R.aHTa)} m\u00b2</td></tr>
+      <tr><td>H-Tail effective (&minus;elevator mech)</td><td>${Math.round(R.aHTaEff/R.cellA)} blocks</td><td>${f(R.aHTaEff)} m\u00b2</td></tr>
       <tr><td>H-Tail struct / elevator chord</td><td>${R.htStructCBlk} / ${R.elCBlk} blocks</td><td>AR ${f(R.htAR,2)}</td></tr>
       <tr><td>V-Fin planform${R.twinFin?' (&times;2)':''}</td><td><strong>${R.vfBlk} blocks</strong></td><td>${f(R.aVFa)} m\u00b2</td></tr>
+      <tr><td>V-Fin effective (&minus;rudder mech)</td><td>${Math.round(R.aVFaEff/R.cellA)} blocks</td><td>${f(R.aVFaEff)} m\u00b2</td></tr>
       <tr><td>V-Fin struct / rudder chord</td><td>${R.vfStructCBlk} / ${R.rdCBlk} blocks</td><td></td></tr>
       <tr><td>Tail arm</td><td colspan="2">${f(R.tailArm)} m</td></tr>
     </table>
@@ -1006,12 +1312,14 @@ function render(R){
     <table>
       <tr><th>Source</th><th>Force</th><th>%</th></tr>
       <tr><td>Wing (profile+induced)</td><td>${f(R.dWing/1000,1)} kN</td><td>${f(R.dWing/R.dTot*100)}%</td></tr>
-      <tr><td>Grid form drag (${f(R.gridFrontal,1)} m\u00b2)</td><td>${f(R.dForm/1000,1)} kN</td><td>${f(R.dForm/R.dTot*100)}%</td></tr>
+      <tr><td>Form drag, fuselage${R.thrusterFrontal>0?'+thrusters':''} (${f(R.gridFrontal,1)} m\u00b2)</td><td>${f(R.dForm/1000,1)} kN</td><td>${f(R.dForm/R.dTot*100)}%</td></tr>
       <tr><td>Fuselage skin friction</td><td>${f(R.dFuseSkin/1000,2)} kN</td><td>${f(R.dFuseSkin/R.dTot*100)}%</td></tr>
       <tr><td>H-Tail (skin + trim)</td><td>${f(R.dTail/1000,2)} kN</td><td>${f(R.dTail/R.dTot*100)}%</td></tr>
-      <tr><td>V-Fin (skin friction)</td><td>${f(R.dFin/1000,2)} kN</td><td>${f(R.dFin/R.dTot*100)}%</td></tr>
+      <tr><td>V-Fin (side-face skin)</td><td>${f(R.dFin/1000,2)} kN</td><td>${f(R.dFin/R.dTot*100)}%</td></tr>
+      <tr><td>V-Fin LE (CD0 @ 90&deg; \u2248 1.2)</td><td>${f(R.dFinLE/1000,2)} kN</td><td>${f(R.dFinLE/R.dTot*100)}%</td></tr>
       <tr class="total"><td>Total</td><td>${f(R.dTot/1000,1)} kN</td><td>100%</td></tr>
     </table>
+    <div class="tip"><strong>Form drag note:</strong> H-tail leading edges are filtered out by PAR's <code>FilterWingEdgePanels</code>. V-fin leading edges are kept as lifting panels and produce drag via the per-panel CL/CD path at 90&deg; &alpha; (shown separately above, not in form-drag silhouette).</div>
   </div>
 
   <div class="panel">
@@ -1028,8 +1336,8 @@ function render(R){
         <td><strong>${f(R.sideslipDeg,1)}\u00b0</strong> <span style="font-size:0.75em;color:var(--text-dim)">(${f(R.crossflowContrib,0)}% fuselage)</span></td><td>&lt; 10\u00b0</td>
         <td style="color:${R.sideslipDeg<=8?'var(--green)':R.sideslipDeg<=15?'var(--yellow)':'var(--orange)'}">${R.sideslipDeg<=8?'GOOD':R.sideslipDeg<=15?'OK':'HIGH'}</td></tr>
       <tr><td>Cruise L/D</td>
-        <td><strong>${f(R.ldCr,1)}</strong></td><td>&ge; 3.0</td>
-        <td style="color:${R.ldCr>=5?'var(--green)':R.ldCr>=3?'var(--yellow)':'var(--orange)'}">${R.ldCr>=5?'GOOD':R.ldCr>=3?'OK':'LOW'}</td></tr>
+        <td><strong>${f(R.ldCr,1)}</strong></td><td>&ge; ${P.ldCruiseTarget}</td>
+        <td style="color:${R.ldCr>=P.ldCruiseTarget?'var(--green)':R.ldCr>=5?'var(--yellow)':'var(--orange)'}">${R.ldCr>=P.ldCruiseTarget?'GOOD':R.ldCr>=5?'OK':'LOW'}</td></tr>
       <tr><td>Wing downwash at tail</td>
         <td><strong>${f(R.downwashDeg,1)}\u00b0</strong></td><td colspan="2">Tail eff. AoA = ${R.cruiseAoA!==null?f(R.tailEffAoA,1):'?'}\u00b0 at cruise</td></tr>
       <tr><td>Roll moment (15\u00b0 aileron)</td>
