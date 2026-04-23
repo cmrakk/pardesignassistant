@@ -772,6 +772,13 @@
                 <details>
                   <summary>Advanced Assumptions</summary>
                   <div class="details-body stack">
+                    <label class="checkbox">
+                      <input id="realisticMassOverride" name="realisticMassOverride" type="checkbox" />
+                      <span>
+                        <strong>Realistic Mass Override</strong><br />
+                        If enabled, the designer uses the same reduced hinge/rotor masses as the mod's `realisticmass` override instead of vanilla mechanical masses.
+                      </span>
+                    </label>
                     <div class="field">
                       <label for="gravityG">Design Gravity (g)</label>
                       <input id="gravityG" name="gravityG" type="number" min="0.1" step="0.05" value="1.0" />
@@ -797,6 +804,7 @@
                   <button type="button" class="btn-primary" id="solveBtn">Recompute Design</button>
                   <button type="button" class="btn-secondary" id="resetBtn">Reset</button>
                 </div>
+                <div class="hint">Inputs do not recompute live while you edit them. The design updates only when you click <strong>Recompute Design</strong>.</div>
               </div>
             </form>
           </div>
@@ -1049,6 +1057,9 @@
         totalMechanicalBlocks: 4,
         continuityFloor: 0.62
       },
+      massOverride: {
+        realisticMechanicalScale: 1 / 15
+      },
       losses: {
         mechanicalGapBlocksPerSurface: 4,
         thrusterLossBlocksPerWing: 10
@@ -1111,7 +1122,8 @@
         slope2x1BaseCamberRad: 0.1222,
         slope2x1TipCamberRad: 0.0733,
         roundSlopeCamberRad: 0.1954,
-        syntheticArmorLiftStreamlining: 0.7
+        syntheticArmorLiftStreamlining: 0.7,
+        crossflowDampingK: 0.10
       },
       controls: {
         maxAileronDeflectionDeg: 15,
@@ -1154,18 +1166,19 @@
       },
       defaults: {
         aircraftType: "multirole",
-        gridType: "large",
-        fuselageWidth: 3,
-        fuselageHeight: 2,
-        fuselageLength: 9,
-        baseMassKg: 150000,
-        coreCgFromNose: 2.2,
-        wingMountHeight: 1,
+        gridType: "small",
+        fuselageWidth: 11,
+        fuselageHeight: 11,
+        fuselageLength: 87,
+        baseMassKg: 75000,
+        coreCgFromNose: 40,
+        wingMountHeight: 6,
         cruiseSpeed: 200,
         gravityG: 1.0,
-        wingThrusters: false,
+        wingThrusters: true,
         optimizeSweep: false,
-        fuselageStreamlining: 55,
+        realisticMassOverride: true,
+        fuselageStreamlining: 60,
         targetCruiseLD: ""
       },
       roles: {
@@ -1210,8 +1223,8 @@
           minFlareLoadFactor: 1.28,
           maxApproachTrimElevatorFraction: 0.46,
           maxFlareTrimElevatorFraction: 0.24,
-          flareCheckFactor: 1.26,
-          flareCheckAddSpeed: 16,
+          flareCheckFactor: 1.10,
+          flareCheckAddSpeed: 5,
           minFlapLiftGainCl: 0.11,
           minFlapStallReduction: 2.5,
           minApproachLiftToDrag: 2.0,
@@ -1265,8 +1278,8 @@
           minFlareLoadFactor: 1.30,
           maxApproachTrimElevatorFraction: 0.48,
           maxFlareTrimElevatorFraction: 0.24,
-          flareCheckFactor: 1.25,
-          flareCheckAddSpeed: 16,
+          flareCheckFactor: 1.10,
+          flareCheckAddSpeed: 6,
           minFlapLiftGainCl: 0.12,
           minFlapStallReduction: 2.5,
           minApproachLiftToDrag: 2.2,
@@ -1320,8 +1333,8 @@
           minFlareLoadFactor: 1.24,
           maxApproachTrimElevatorFraction: 0.48,
           maxFlareTrimElevatorFraction: 0.26,
-          flareCheckFactor: 1.28,
-          flareCheckAddSpeed: 18,
+          flareCheckFactor: 1.11,
+          flareCheckAddSpeed: 6,
           minFlapLiftGainCl: 0.06,
           minFlapStallReduction: 1.2,
           minApproachLiftToDrag: 1.9,
@@ -1375,8 +1388,8 @@
           minFlareLoadFactor: 1.24,
           maxApproachTrimElevatorFraction: 0.44,
           maxFlareTrimElevatorFraction: 0.24,
-          flareCheckFactor: 1.24,
-          flareCheckAddSpeed: 16,
+          flareCheckFactor: 1.10,
+          flareCheckAddSpeed: 6,
           minFlapLiftGainCl: 0.11,
           minFlapStallReduction: 2.0,
           minApproachLiftToDrag: 2.1,
@@ -1430,8 +1443,8 @@
           minFlareLoadFactor: 1.30,
           maxApproachTrimElevatorFraction: 0.40,
           maxFlareTrimElevatorFraction: 0.20,
-          flareCheckFactor: 1.22,
-          flareCheckAddSpeed: 14,
+          flareCheckFactor: 1.07,
+          flareCheckAddSpeed: 4,
           minFlapLiftGainCl: 0.16,
           minFlapStallReduction: 3.5,
           minApproachLiftToDrag: 1.8,
@@ -1455,6 +1468,20 @@
         CONFIG.controlSurfaceMechanics.hingeCount * grid.hingeMass;
     }
 
+    function getEffectiveGrid(gridType, realisticMassOverride = false) {
+      const base = CONFIG.grids[gridType];
+      if (!base) return null;
+      const effective = { ...base };
+      if (realisticMassOverride) {
+        effective.rotorMass *= CONFIG.massOverride.realisticMechanicalScale;
+        effective.hingeMass *= CONFIG.massOverride.realisticMechanicalScale;
+      }
+      effective.controlSurfaceMass =
+        CONFIG.controlSurfaceMechanics.rotorCount * effective.rotorMass +
+        CONFIG.controlSurfaceMechanics.hingeCount * effective.hingeMass;
+      return effective;
+    }
+
     const elements = {
       form: document.getElementById("designForm"),
       inputBanner: document.getElementById("inputBanner"),
@@ -1471,6 +1498,7 @@
       gravityG: document.getElementById("gravityG"),
       wingThrusters: document.getElementById("wingThrusters"),
       optimizeSweep: document.getElementById("optimizeSweep"),
+      realisticMassOverride: document.getElementById("realisticMassOverride"),
       fuselageStreamlining: document.getElementById("fuselageStreamlining"),
       targetCruiseLD: document.getElementById("targetCruiseLD"),
       solveBtn: document.getElementById("solveBtn"),
@@ -1509,7 +1537,6 @@
     let lastValidResult = null;
     let lastValidInput = null;
     let lastGridType = CONFIG.defaults.gridType;
-    let recomputeTimer = null;
     const rectangularFootprintCache = new Map();
     const trapezoidFootprintCache = new Map();
     const finFootprintCache = new Map();
@@ -1535,6 +1562,7 @@
       elements.gravityG.value = d.gravityG;
       elements.wingThrusters.checked = d.wingThrusters;
       elements.optimizeSweep.checked = d.optimizeSweep;
+      elements.realisticMassOverride.checked = d.realisticMassOverride;
       elements.fuselageStreamlining.value = d.fuselageStreamlining;
       elements.targetCruiseLD.value = d.targetCruiseLD;
       lastGridType = d.gridType;
@@ -1625,12 +1653,142 @@
       return clamp(inputs.wingMountHeightBlocks, 1, Math.max(1, inputs.fuselageHeightBlocks));
     }
 
+    function getCoreCgHeightBlocks(inputs) {
+      return inputs.fuselageHeightBlocks * 0.5;
+    }
+
     function getWingTailVerticalSeparationBlocks(inputs) {
       return Math.max(0, getTailMountHeightBlocks(inputs) - getWingMountHeightBlocks(inputs));
     }
 
     function getWingTailVerticalSeparationMeters(inputs, grid) {
       return blocksToMeters(getWingTailVerticalSeparationBlocks(inputs), grid);
+    }
+
+    function computePitchMomentFromSurfaceForces(liftForce, dragForce, xStation, zStation, cgX, cgZ, camberMoment = 0) {
+      const xArm = xStation - cgX;
+      const zArm = zStation - cgZ;
+      return camberMoment - liftForce * xArm + dragForce * zArm;
+    }
+
+    function computeEquivalentColStation(cgX, totalLift, totalMoment) {
+      if (!Number.isFinite(totalLift) || Math.abs(totalLift) < 1e-6) return cgX;
+      return cgX - totalMoment / totalLift;
+    }
+
+    function computeBodyAxisFormCd(lengthMeters, frontalArea) {
+      const diameter = frontalArea > 0 ? 2 * Math.sqrt(frontalArea / Math.PI) : 1;
+      const finenessRatio = diameter > 0.01 ? lengthMeters / diameter : 1;
+      return clamp(
+        CONFIG.aero.fuselageCdFormBase / (1 + CONFIG.aero.fuselageCdFormFactor * Math.pow(finenessRatio, CONFIG.aero.fuselageFinenessExponent)),
+        CONFIG.aero.fuselageCdFormClamp[0],
+        CONFIG.aero.fuselageCdFormClamp[1]
+      );
+    }
+
+    function getFuselageProjectedGeometry(result) {
+      const width = result.inputs.fuselageWidth;
+      const height = result.inputs.fuselageHeight;
+      const length = result.inputs.fuselageLength;
+      return {
+        length,
+        width,
+        height,
+        areas: {
+          x: width * height,
+          y: length * height,
+          z: length * width
+        },
+        formCd: {
+          x: computeBodyAxisFormCd(length, width * height),
+          y: computeBodyAxisFormCd(width, length * height),
+          z: computeBodyAxisFormCd(height, length * width)
+        },
+        centroid: {
+          x: 0.5 * length,
+          z: 0.5 * height
+        }
+      };
+    }
+
+    function computeFuselageBodyAeroState(result, speed, alphaRad, cgX, cgZ) {
+      const q = computeDynamicPressure(speed);
+      const geo = getFuselageProjectedGeometry(result);
+      const sampleSpeed = Math.max(speed, 1e-6);
+      const velDir = {
+        x: Math.cos(alphaRad),
+        z: -Math.sin(alphaRad)
+      };
+      const liftDir = {
+        x: -velDir.z,
+        z: velDir.x
+      };
+      const bodyStreamlining = result.fuselageStreamliningFactor;
+      let forceX = 0;
+      let forceZ = 0;
+      let totalMoment = 0;
+      let formDragAlongFlow = 0;
+      let liftAlongNormal = 0;
+
+      function applyAxisSample(axis, axisVel, area, formCd, xStation, zStation) {
+        if (Math.abs(axisVel) < 1e-6 || area <= 0) return;
+        const r = axisVel / sampleSpeed;
+        const absR = Math.abs(r);
+        const scalar = -q * area * r * (formCd * bodyStreamlining * absR + CONFIG.par.crossflowDampingK * (1 - absR));
+        const sampleForceX = axis === "x" ? scalar : 0;
+        const sampleForceZ = axis === "z" ? scalar : 0;
+        forceX += sampleForceX;
+        forceZ += sampleForceZ;
+        totalMoment += -sampleForceZ * (xStation - cgX) + sampleForceX * (zStation - cgZ);
+        const alongFlow = -(sampleForceX * velDir.x + sampleForceZ * velDir.z);
+        const alongLift = sampleForceX * liftDir.x + sampleForceZ * liftDir.z;
+        formDragAlongFlow += alongFlow;
+        liftAlongNormal += alongLift;
+      }
+
+      applyAxisSample(
+        "x",
+        velDir.x * sampleSpeed,
+        geo.areas.x,
+        geo.formCd.x,
+        geo.centroid.x,
+        geo.centroid.z
+      );
+
+      const bodyHalfLength = geo.length * 0.5;
+      const zSampleOffset = Math.abs(velDir.z) > 1e-6
+        ? [geo.centroid.x - 0.25 * bodyHalfLength, geo.centroid.x + 0.25 * bodyHalfLength]
+        : [geo.centroid.x];
+      for (const xStation of zSampleOffset) {
+        applyAxisSample(
+          "z",
+          velDir.z * sampleSpeed,
+          geo.areas.z / zSampleOffset.length,
+          geo.formCd.z,
+          xStation,
+          geo.centroid.z
+        );
+      }
+
+      const fuselageWettedArea = CONFIG.aero.fuselageWettedFactor * geo.length * (geo.width + geo.height);
+      const skinDragMagnitude = q * fuselageWettedArea * CONFIG.aero.fuselageSkinCf * getParReynoldsCd0Scale(geo.length, speed);
+      const skinForceX = -skinDragMagnitude * velDir.x;
+      const skinForceZ = -skinDragMagnitude * velDir.z;
+      forceX += skinForceX;
+      forceZ += skinForceZ;
+      totalMoment += -skinForceZ * (geo.centroid.x - cgX) + skinForceX * (geo.centroid.z - cgZ);
+      const skinLiftAlongNormal = skinForceX * liftDir.x + skinForceZ * liftDir.z;
+
+      return {
+        q,
+        forceX,
+        forceZ,
+        totalLift: liftAlongNormal + skinLiftAlongNormal,
+        totalMoment,
+        formDrag: Math.max(formDragAlongFlow, 0),
+        skinDrag: skinDragMagnitude,
+        totalDrag: Math.max(formDragAlongFlow, 0) + skinDragMagnitude
+      };
     }
 
     function fmtBlockDistance(meters, grid, digits = 1) {
@@ -1760,14 +1918,6 @@
       }
     }
 
-    function scheduleRecompute(delayMs = CONFIG.performance.recomputeDebounceMs) {
-      if (recomputeTimer) clearTimeout(recomputeTimer);
-      recomputeTimer = setTimeout(() => {
-        recomputeTimer = null;
-        recomputeDesign();
-      }, delayMs);
-    }
-
     function readInputs() {
       clearErrors();
       const errors = {};
@@ -1804,7 +1954,7 @@
       if (!streamliningRes.ok) errors.fuselageStreamlining = streamliningRes.message;
       if (!targetLDRes.ok) errors.targetCruiseLD = targetLDRes.message;
 
-      const grid = CONFIG.grids[gridType];
+      const grid = getEffectiveGrid(gridType, elements.realisticMassOverride.checked);
       if (widthRes.ok && heightRes.ok && lengthRes.ok) {
         if (lengthRes.value <= Math.max(widthRes.value, heightRes.value) * 1.15) {
           errors.fuselageLength = "Length in blocks must exceed the largest fuselage cross-section block count by a meaningful margin for aircraft sizing.";
@@ -1852,6 +2002,7 @@
         gravityG: gravityRes.value,
         wingThrusters: elements.wingThrusters.checked,
         optimizeSweep: elements.optimizeSweep.checked,
+        realisticMassOverride: elements.realisticMassOverride.checked,
         fuselageStreamlining: streamliningRes.value == null ? CONFIG.defaults.fuselageStreamlining : streamliningRes.value,
         targetCruiseLD: targetLDRes.value == null ? null : targetLDRes.value
       };
@@ -2983,6 +3134,7 @@
         score += Math.pow(role.staticMarginMin - metrics.staticMargin, 2) * 420;
       }
       score += Math.pow(metrics.staticMargin - role.staticMarginTarget, 2) * 28;
+      score += Math.pow(Math.max(metrics.staticMargin - (role.staticMarginTarget + 0.14), 0), 2) * 260;
       score += Math.pow(Math.max(metrics.requiredTailCl, 0), 2) * 95;
       score += Math.pow(Math.max(metrics.trimFraction - 0.38, 0), 2) * 85;
       score += Math.pow(Math.max(0.08 - metrics.cgRelMac, 0), 2) * 30;
@@ -3084,15 +3236,20 @@
           xWingAc: candidate.xWingAc,
           xTailAc: candidate.xTailAc,
           cgX: candidate.metrics.cgX,
+          cgZ: blocksToMeters(getCoreCgHeightBlocks(result.inputs), grid),
+          wingForceZ: blocksToMeters(getWingMountHeightBlocks(result.inputs), grid),
+          tailForceZ: blocksToMeters(getTailMountHeightBlocks(result.inputs), grid),
           referenceArea: result.wingSystem.structuralArea,
-          referenceChord: result.wingSystem.footprint.mac
+          referenceChord: result.wingSystem.footprint.mac,
+          gridKey: grid.key,
+          resultRef: result
         };
         const parSolve = solveParCamberTargets(wingRowsBase, tailRowsBase, camberContext);
         const finalScore =
           candidate.approxScore +
           parSolve.liftResidual * 22 +
           parSolve.momentResidual * 34 +
-          Math.max(parSolve.tailTarget, 0) * 1.6;
+          Math.max(parSolve.tailAchievedMean, 0) * 1.6;
 
         if (!best || finalScore < best.finalScore) {
           best = {
@@ -3645,14 +3802,14 @@
     }
 
     function evaluateContinuousCamberTargets(wingRowsBase, tailRowsBase, wingTarget, tailTarget, context) {
+      const wingRows = mapRowsToSlopeRecommendations(wingRowsBase, wingTarget, context.gridKey);
       const wingEval = evaluateParRows(
-        wingRowsBase,
+        wingRows,
         context.wingAR,
         context.q,
         context.speed,
         0,
-        context.wingCosSweep,
-        { uniformCamber: wingTarget }
+        context.wingCosSweep
       );
       const downwash = computeParDownwashAngle(
         wingEval.cl,
@@ -3660,20 +3817,53 @@
         context.tailArm,
         context.tailDeltaYMeters || 0
       );
+      const tailRows = mapRowsToSlopeRecommendations(tailRowsBase, tailTarget, context.gridKey);
       const tailEval = evaluateParRows(
-        tailRowsBase,
+        tailRows,
         context.tailAR,
         context.q,
         context.speed,
         downwash,
-        context.tailCosSweep,
-        { uniformCamber: tailTarget }
+        context.tailCosSweep
       );
-      const totalLift = wingEval.lift + tailEval.lift;
+      const bodyAero = computeFuselageBodyAeroState(context.resultRef, context.speed, 0, context.cgX, context.cgZ);
+      const totalLift = wingEval.lift + tailEval.lift + bodyAero.totalLift;
       const totalMoment =
-        wingEval.camberMoment - wingEval.lift * (context.xWingAc - context.cgX) +
-        tailEval.camberMoment - tailEval.lift * (context.xTailAc - context.cgX);
-      return { wingEval, tailEval, totalLift, totalMoment, downwash };
+        computePitchMomentFromSurfaceForces(
+          wingEval.lift,
+          wingEval.drag,
+          context.xWingAc,
+          context.wingForceZ,
+          context.cgX,
+          context.cgZ,
+          wingEval.camberMoment
+        ) +
+        computePitchMomentFromSurfaceForces(
+          tailEval.lift,
+          tailEval.drag,
+          context.xTailAc,
+          context.tailForceZ,
+          context.cgX,
+          context.cgZ,
+          tailEval.camberMoment
+        ) +
+        bodyAero.totalMoment;
+      const wingArea = Math.max(wingRows.reduce((sum, row) => sum + row.area, 0), 1);
+      const tailArea = Math.max(tailRows.reduce((sum, row) => sum + row.area, 0), 1);
+      const wingAchievedMean = wingRows.reduce((sum, row) => sum + row.rowCamber * row.area, 0) / wingArea;
+      const tailAchievedMean = tailRows.reduce((sum, row) => sum + row.rowCamber * row.area, 0) / tailArea;
+      return {
+        wingRows,
+        tailRows,
+        wingEval,
+        tailEval,
+        bodyAero,
+        totalLift,
+        totalMoment,
+        downwash,
+        wingAchievedMean,
+        tailAchievedMean
+      };
     }
 
     function solveParCamberTargets(wingRowsBase, tailRowsBase, context) {
@@ -3694,9 +3884,9 @@
             const score =
               liftResidual * 1.4 +
               momentResidual * 2.6 +
-              Math.abs(tailTarget) * 0.05 +
-              Math.max(tailTarget, 0) * 0.12 +
-              Math.abs(wingTarget) * 0.02;
+              Math.abs(evaluation.tailAchievedMean) * 0.05 +
+              Math.max(evaluation.tailAchievedMean, 0) * 0.12 +
+              Math.abs(evaluation.wingAchievedMean) * 0.02;
             if (!best || score < best.score) {
               best = {
                 score,
@@ -3758,6 +3948,9 @@
 
     function evaluateAircraftPitchState(result, wingRows, tailRows, speed, alphaRad = 0, controls = null) {
       const q = computeDynamicPressure(speed);
+      const cgZ = blocksToMeters(getCoreCgHeightBlocks(result.inputs), result.grid);
+      const wingForceZ = blocksToMeters(getWingMountHeightBlocks(result.inputs), result.grid);
+      const tailForceZ = blocksToMeters(getTailMountHeightBlocks(result.inputs), result.grid);
       const wingEval = evaluateParRows(
         wingRows,
         result.wingSystem.footprint.groupAspectRatio,
@@ -3783,11 +3976,28 @@
         result.tailSystem.footprint.cosSweep || 1,
         { baseAlpha: alphaRad, controls }
       );
-      const totalLift = wingEval.lift + tailEval.lift;
+      const bodyAero = computeFuselageBodyAeroState(result, speed, alphaRad, result.cgX, cgZ);
+      const totalLift = wingEval.lift + tailEval.lift + bodyAero.totalLift;
       const totalMoment =
-        wingEval.camberMoment - wingEval.lift * (result.xWingAc - result.cgX) +
-        tailEval.camberMoment - tailEval.lift * (result.xTailAc - result.cgX);
-      const fuselageDrag = computeFuselageDragAtQ(result, q, speed);
+        computePitchMomentFromSurfaceForces(
+          wingEval.lift,
+          wingEval.drag,
+          result.xWingAc,
+          wingForceZ,
+          result.cgX,
+          cgZ,
+          wingEval.camberMoment
+        ) +
+        computePitchMomentFromSurfaceForces(
+          tailEval.lift,
+          tailEval.drag,
+          result.xTailAc,
+          tailForceZ,
+          result.cgX,
+          cgZ,
+          tailEval.camberMoment
+        ) +
+        bodyAero.totalMoment;
       const finParasiteDrag = q * result.finSystem.structuralArea * getParSectionCoefficients(
         0,
         0,
@@ -3797,13 +4007,14 @@
         1,
         0
       ).cd0;
-      const totalDrag = wingEval.drag + tailEval.drag + finParasiteDrag + fuselageDrag.form + fuselageDrag.skin;
+      const totalDrag = wingEval.drag + tailEval.drag + finParasiteDrag + bodyAero.totalDrag;
       const referenceArea = Math.max(result.wingSystem.structuralArea, result.grid.cellArea);
       const referenceChord = Math.max(result.wingSystem.footprint.mac, result.grid.cell);
       return {
         q,
         wingEval,
         tailEval,
+        bodyAero,
         downwashAngle,
         totalLift,
         totalMoment,
@@ -4175,6 +4386,46 @@
       return value < target - tolerance;
     }
 
+    function getSizingMassKg(coreMassKg, massGuess, role) {
+      const baseMass = Math.max(coreMassKg, 1);
+      const fullMass = Math.max(massGuess, baseMass);
+      const addedMass = Math.max(fullMass - baseMass, 0);
+      const roleMassRatio = clamp(baseMass / Math.max(role.referenceMassKg || baseMass, 1), 0, 1);
+      const feedbackFraction = linearInterpolate(0.42, 0.72, roleMassRatio);
+      return baseMass + addedMass * feedbackFraction;
+    }
+
+    function getLandingTrimGraceEnvelope(low) {
+      const targets = (low && low.targets) || {};
+      return {
+        maxApproachTrimFraction: Math.max(targets.maxApproachTrimElevatorFraction || 1, 0.36),
+        maxFlareTrimFraction: Math.max(targets.maxFlareTrimElevatorFraction || 1, 0.42),
+        minFreeAirLoadFactorMargin: 0.12,
+        minFlareLoadFactor: Math.max((targets.minFlareLoadFactor || 1.25) - 0.10, 1.18),
+        maxForwardColShiftFracMac: 0.10,
+        maxPitchPenaltyCoeff: 0.05
+      };
+    }
+
+    function hasPreferredLandingTrim(low) {
+      if (!low || !low.targets) return false;
+      return (low.trimmedApproachElevatorFraction || 0) <= (low.targets.maxApproachTrimElevatorFraction || 1) &&
+        (low.flareTrimmedElevatorFraction || 0) <= (low.targets.maxFlareTrimElevatorFraction || 1) &&
+        (low.freeAirWorstTrimFraction || 0) <= (low.targets.maxFlareTrimElevatorFraction || 1);
+    }
+
+    function hasAdequateFreeAirFlareAuthority(low) {
+      if (!low || !low.targets) return false;
+      const grace = getLandingTrimGraceEnvelope(low);
+      return (low.flareLoadFactor || 0) >= grace.minFlareLoadFactor &&
+        (low.freeAirMinLoadFactorMargin || -1) >= grace.minFreeAirLoadFactorMargin &&
+        (low.trimmedApproachElevatorFraction || 1) <= grace.maxApproachTrimFraction &&
+        (low.flareTrimmedElevatorFraction || 1) <= grace.maxFlareTrimFraction &&
+        (low.freeAirWorstTrimFraction || 1) <= grace.maxFlareTrimFraction &&
+        (low.maxFlapForwardColShiftFracMac || 0) <= grace.maxForwardColShiftFracMac &&
+        (low.maxFlapPitchPenaltyCoeff || 0) <= grace.maxPitchPenaltyCoeff;
+    }
+
     function getPracticalWingLimits(inputs, role, grid) {
       const maxOverallSpanBlocks = Math.max(
         inputs.fuselageWidthBlocks + 4,
@@ -4233,6 +4484,89 @@
       recomputeMassAndPlacement(result, grid);
     }
 
+    function scoreFinalCruiseTrimStations(result, wingRows, tailRows, speed) {
+      const state = evaluateAircraftPitchState(result, wingRows, tailRows, speed, 0, null);
+      const stability = computeNumericStaticMargin(result, wingRows, tailRows, speed);
+      const weight = Math.max(result.totalMass * result.g, 1);
+      const liftResidual = Math.abs(state.totalLift - weight) / weight;
+      const cmResidual = Math.abs(state.cmTotal);
+      const role = result.role;
+      let score = 0;
+      score += liftResidual * 2.2;
+      score += cmResidual * 8.5;
+      score += Math.pow(Math.max(role.staticMarginMin - stability.staticMargin, 0), 2) * 420;
+      score += Math.pow(Math.max(stability.staticMargin - (role.staticMarginTarget + 0.12), 0), 2) * 180;
+      score += Math.pow(Math.max(state.tailEval.cl, 0), 2) * 0.18;
+      score += Math.abs(state.tailEval.cl) * 0.04;
+      return {
+        score,
+        state,
+        stability,
+        liftResidual,
+        cmResidual
+      };
+    }
+
+    function refineFinalCruiseTrimStations(result, wingRows, tailRows, grid) {
+      const wing = result.wingSystem.footprint;
+      const tail = result.tailSystem.footprint;
+      const currentWingLE = Math.round(metersToBlocks(result.xWingAc - 0.25 * wing.mac, grid));
+      const currentTailLE = Math.round(metersToBlocks(result.xTailAc - 0.25 * tail.mac, grid));
+      const tailRange = getTailPlacementRangeBlocks(result.inputs, result.tailSystem);
+      const wingMin = 0;
+      const wingMax = Math.max(wingMin, Math.min(currentWingLE + 3, tailRange.min - 2));
+      const tailMin = Math.max(tailRange.min, currentTailLE - 2);
+      const tailMax = Math.max(tailMin, Math.min(tailRange.max, currentTailLE + 2));
+      const original = {
+        xWingAc: result.xWingAc,
+        xTailAc: result.xTailAc,
+        xFinAc: result.xFinAc
+      };
+      let best = null;
+
+      for (let wingLEBlocks = Math.max(wingMin, currentWingLE - 3); wingLEBlocks <= wingMax; wingLEBlocks++) {
+        for (let tailLEBlocks = tailMin; tailLEBlocks <= tailMax; tailLEBlocks++) {
+          if (tailLEBlocks - wingLEBlocks < 2) continue;
+          const finLEBlocks = getPreferredFinLEBlocks(result.inputs, tailLEBlocks, result.finSystem.footprint);
+          result.xWingAc = blocksToMeters(wingLEBlocks, grid) + 0.25 * wing.mac;
+          result.xTailAc = blocksToMeters(tailLEBlocks, grid) + 0.25 * tail.mac;
+          result.xFinAc = blocksToMeters(finLEBlocks, grid) + 0.25 * result.finSystem.footprint.mac;
+          recomputeMassAndPlacement(result, grid);
+          const scored = scoreFinalCruiseTrimStations(result, wingRows, tailRows, result.inputs.cruiseSpeed);
+          const movementPenalty = (Math.abs(wingLEBlocks - currentWingLE) + Math.abs(tailLEBlocks - currentTailLE)) * 0.01;
+          const totalScore = scored.score + movementPenalty;
+          if (!best || totalScore < best.score) {
+            best = {
+              score: totalScore,
+              wingLEBlocks,
+              tailLEBlocks,
+              finLEBlocks
+            };
+          }
+        }
+      }
+
+      if (!best) {
+        result.xWingAc = original.xWingAc;
+        result.xTailAc = original.xTailAc;
+        result.xFinAc = original.xFinAc;
+        recomputeMassAndPlacement(result, grid);
+        return;
+      }
+
+      result.xWingAc = blocksToMeters(best.wingLEBlocks, grid) + 0.25 * wing.mac;
+      result.xTailAc = blocksToMeters(best.tailLEBlocks, grid) + 0.25 * tail.mac;
+      result.xFinAc = blocksToMeters(best.finLEBlocks, grid) + 0.25 * result.finSystem.footprint.mac;
+      result.snapped = {
+        ...(result.snapped || {}),
+        wingLEBlocks: best.wingLEBlocks,
+        tailLEBlocks: best.tailLEBlocks,
+        finLEBlocks: best.finLEBlocks,
+        finalCruiseRefined: true
+      };
+      recomputeMassAndPlacement(result, grid);
+    }
+
     function evaluateWingRollAuthority(result, wingRowsPerSide, speed, alphaRad, flapRad, aileronRad) {
       const q = computeDynamicPressure(speed);
       const wingCosSweep = result.wingSystem.footprint.cosSweep || 1;
@@ -4286,6 +4620,82 @@
         yawMoment,
         coeff: Math.abs(yawMoment) / reference,
         cl: finEval.cl
+      };
+    }
+
+    function buildFreeAirSpeedPoints(stallSpeed, approachSpeed, flareCheckSpeed) {
+      const raw = [
+        Math.max(0.5 * (approachSpeed + flareCheckSpeed), stallSpeed + 5),
+        flareCheckSpeed
+      ].filter((speed) => Number.isFinite(speed) && speed > 1);
+      raw.sort((a, b) => b - a);
+      const unique = [];
+      for (const speed of raw) {
+        if (!unique.some((existing) => Math.abs(existing - speed) < 1.5)) {
+          unique.push(speed);
+        }
+      }
+      return unique;
+    }
+
+    function evaluateFreeAirEnvelopePoint(result, wingRows, tailRows, speed, flapRad, referenceFlapRad = 0) {
+      const trim = findTrimmedLiftBalanceAlpha(result, wingRows, tailRows, speed, { flapRad });
+      const weight = result.totalMass * result.g;
+      const alpha = Number.isFinite(trim.alpha) ? trim.alpha : 0;
+      const flapNeutralState = evaluateAircraftPitchState(result, wingRows, tailRows, speed, alpha, { flapRad });
+      const referenceControls = referenceFlapRad > 0 ? { flapRad: referenceFlapRad } : null;
+      const referenceTrim = findPitchTrimElevator(result, wingRows, tailRows, speed, alpha, referenceControls);
+      const referenceNeutralState = evaluateAircraftPitchState(result, wingRows, tailRows, speed, alpha, referenceControls);
+      const maxLift = evaluateMaxTrimmedLiftAtSpeed(result, wingRows, tailRows, speed, { flapRad });
+      const maxLoadFactor = maxLift && maxLift.state
+        ? maxLift.state.totalLift / Math.max(weight, 1)
+        : 0;
+      const trimFraction = Math.abs(trim.elevatorRad || 0) / Math.max(CONFIG.controls.maxElevatorDeflectionDeg * Math.PI / 180, 1e-6);
+      const flapEquivalentCol = computeEquivalentColStation(result.cgX, flapNeutralState.totalLift, flapNeutralState.totalMoment);
+      const referenceEquivalentCol = computeEquivalentColStation(result.cgX, referenceNeutralState.totalLift, referenceNeutralState.totalMoment);
+      const forwardColShift = Math.max(referenceEquivalentCol - flapEquivalentCol, 0);
+      return {
+        speed,
+        trim,
+        alpha,
+        trimFraction,
+        maxLift,
+        maxLoadFactor,
+        loadFactorMargin: maxLoadFactor - 1,
+        referenceTrim,
+        referenceNeutralState,
+        flapNeutralState,
+        pitchPenaltyCoeff: Math.max(flapNeutralState.cmTotal - referenceNeutralState.cmTotal, 0),
+        forwardColShift,
+        forwardColShiftFracMac: forwardColShift / Math.max(result.wingSystem.footprint.mac, result.grid.cell),
+        flapLiftGainCl: flapNeutralState.clTotal - referenceNeutralState.clTotal,
+        flapDragDeltaCd: Math.max(flapNeutralState.totalDrag - referenceNeutralState.totalDrag, 0) / Math.max(flapNeutralState.q * result.wingSystem.structuralArea, 1)
+      };
+    }
+
+    function buildRecommendedFlapSchedule(result, approachSpeed, flareCheckSpeed, worstPitchPenaltyCoeff) {
+      const cruiseSpeed = result.inputs.cruiseSpeed;
+      const tighten = clamp(worstPitchPenaltyCoeff / 0.08, 0, 1);
+      const full30 = clamp(
+        approachSpeed + linearInterpolate(18, 8, tighten),
+        flareCheckSpeed + 4,
+        Math.min(cruiseSpeed * 0.68, approachSpeed + 24)
+      );
+      const flap20 = clamp(
+        full30 + linearInterpolate(16, 10, tighten),
+        full30 + 6,
+        Math.min(cruiseSpeed * 0.80, approachSpeed + 38)
+      );
+      const flap10 = clamp(
+        flap20 + linearInterpolate(18, 12, tighten),
+        flap20 + 8,
+        Math.min(cruiseSpeed * 0.90, approachSpeed + 58)
+      );
+      return {
+        deg10MaxSpeed: flap10,
+        deg20MaxSpeed: flap20,
+        deg30MaxSpeed: full30,
+        summary: `10° below ${fmtSpeed(flap10)}, 20° below ${fmtSpeed(flap20)}, 30° only below ${fmtSpeed(full30)}`
       };
     }
 
@@ -4351,9 +4761,33 @@
         ? cleanMaxLiftApproach.state.totalLift / Math.max(weight, 1)
         : 1;
       const flareLoadFactorGain = flareLoadFactor - cleanFlareLoadFactor;
-
-      const wingRowsPerSide = buildWingRows(result.wingSystem, true);
-      wingRowsPerSide.forEach((row) => { row.rowCamber = result.camber.wingTarget; });
+      const freeAirEnvelope = buildFreeAirSpeedPoints(stallSpeed, approachSpeed, flareCheckSpeed)
+        .map((speed) => evaluateFreeAirEnvelopePoint(result, wingRows, tailRows, speed, flapRad))
+        .sort((a, b) => b.speed - a.speed);
+      const worstFreeAirTrimPoint = freeAirEnvelope.reduce((worst, point) =>
+        (!worst || point.trimFraction > worst.trimFraction) ? point : worst, null);
+      const worstFreeAirLoadPoint = freeAirEnvelope.reduce((worst, point) =>
+        (!worst || point.loadFactorMargin < worst.loadFactorMargin) ? point : worst, null);
+      const maxFlapPitchPenaltyCoeff = freeAirEnvelope.reduce((max, point) => Math.max(max, point.pitchPenaltyCoeff), 0);
+      const maxFlapForwardColShift = freeAirEnvelope.reduce((max, point) => Math.max(max, point.forwardColShift), 0);
+      const maxFlapForwardColShiftFracMac = freeAirEnvelope.reduce((max, point) => Math.max(max, point.forwardColShiftFracMac), 0);
+      const freeAirWorstTrimFraction = worstFreeAirTrimPoint ? worstFreeAirTrimPoint.trimFraction : flareTrimmedElevatorFraction;
+      const freeAirWorstTrimSpeed = worstFreeAirTrimPoint ? worstFreeAirTrimPoint.speed : flareCheckSpeed;
+      const freeAirMinLoadFactorMargin = worstFreeAirLoadPoint ? worstFreeAirLoadPoint.loadFactorMargin : flareLoadFactor - 1;
+      const freeAirMinLoadFactorSpeed = worstFreeAirLoadPoint ? worstFreeAirLoadPoint.speed : flareCheckSpeed;
+      const lowSpeedSummary = {
+        targets: landingTargets,
+        trimmedApproachElevatorFraction,
+        flareTrimmedElevatorFraction,
+        flareLoadFactor,
+        freeAirWorstTrimFraction,
+        freeAirMinLoadFactorMargin,
+        maxFlapPitchPenaltyCoeff,
+        maxFlapForwardColShiftFracMac
+      };
+      const preferredLandingTrim = hasPreferredLandingTrim(lowSpeedSummary);
+      const adequateFreeAirFlareAuthority = hasAdequateFreeAirFlareAuthority(lowSpeedSummary);
+      const wingRowsPerSide = mapRowsToSlopeRecommendations(buildWingRows(result.wingSystem, true), result.camber.wingTarget, result.grid.key);
       const aileron = evaluateWingRollAuthority(
         result,
         wingRowsPerSide,
@@ -4378,6 +4812,9 @@
       if (flareLoadFactor < landingTargets.minFlareLoadFactor) {
         elevatorVerdict = shiftVerdict(elevatorVerdict, -1);
       }
+      if (worstFreeAirTrimPoint && worstFreeAirTrimPoint.trimFraction > landingTargets.maxFlareTrimElevatorFraction) {
+        elevatorVerdict = shiftVerdict(elevatorVerdict, -1);
+      }
       let flapVerdict = classifyFlapUsefulness(stallSpeedReduction, approachAlphaReduction, flapLiftGainCl, flapDragDeltaCd);
       if (
         stallSpeedReduction < landingTargets.minFlapStallReduction &&
@@ -4387,6 +4824,10 @@
       ) {
         flapVerdict = shiftVerdict(flapVerdict, -1);
       }
+      if (maxFlapPitchPenaltyCoeff > 0.04 || maxFlapForwardColShiftFracMac > 0.12) {
+        flapVerdict = shiftVerdict(flapVerdict, -1);
+      }
+      const flapSchedule = buildRecommendedFlapSchedule(result, approachSpeed, flareCheckSpeed, maxFlapPitchPenaltyCoeff);
 
       return {
         targets: landingTargets,
@@ -4424,13 +4865,23 @@
         cleanFlareLoadFactor,
         flareLoadFactorGain,
         flareLoadFactorMargin: flareLoadFactor - landingTargets.minFlareLoadFactor,
+        preferredLandingTrim,
+        adequateFreeAirFlareAuthority,
         sinkArrestSatisfied:
-          flareLoadFactor >= landingTargets.minFlareLoadFactor &&
-          trimmedApproachElevatorFraction <= landingTargets.maxApproachTrimElevatorFraction &&
-          flareTrimmedElevatorFraction <= landingTargets.maxFlareTrimElevatorFraction,
+          (!worstFreeAirLoadPoint || worstFreeAirLoadPoint.loadFactorMargin >= 0) &&
+          (preferredLandingTrim || adequateFreeAirFlareAuthority),
         flapDeltaCL: flapLiftGainCl,
         flapDeltaCD: flapDragDeltaCd,
         maxClFlaps30: stall.maxLiftState && stall.maxLiftState.state ? stall.maxLiftState.state.clTotal : 0,
+        freeAirEnvelope,
+        freeAirWorstTrimFraction,
+        freeAirWorstTrimSpeed,
+        freeAirMinLoadFactorMargin,
+        freeAirMinLoadFactorSpeed,
+        maxFlapPitchPenaltyCoeff,
+        maxFlapForwardColShift,
+        maxFlapForwardColShiftFracMac,
+        flapSchedule,
         elevatorVerdict,
         aileronVerdict: classifyControlFromCoefficient(aileron.coeff, "aileron", result.inputs.aircraftType),
         rudderVerdict: classifyControlFromCoefficient(rudder.coeff, "rudder", result.inputs.aircraftType),
@@ -4842,15 +5293,27 @@
       if (!result || !result.lowSpeed || !result.solveability) return Number.POSITIVE_INFINITY;
       const low = result.lowSpeed;
       const targets = low.targets || {};
+      const adequateFreeAirFlareAuthority = hasAdequateFreeAirFlareAuthority(low);
+      const staticMarginTarget = result.role.staticMarginTarget || 0;
+      const approachTrimPenaltyScale = adequateFreeAirFlareAuthority ? 220 : 450;
+      const flareTrimPenaltyScale = adequateFreeAirFlareAuthority ? 260 : 800;
+      const freeAirTrimPenaltyScale = adequateFreeAirFlareAuthority ? 280 : 900;
       let penalty = 0;
       penalty += Math.max(low.stallSpeed - low.targetStallSpeed, 0) * 8;
-      penalty += Math.max((low.trimmedApproachElevatorFraction || 0) - (targets.maxApproachTrimElevatorFraction || 1), 0) * 450;
-      penalty += Math.max((low.flareTrimmedElevatorFraction || 0) - (targets.maxFlareTrimElevatorFraction || 1), 0) * 800;
+      penalty += Math.max((low.trimmedApproachElevatorFraction || 0) - (targets.maxApproachTrimElevatorFraction || 1), 0) * approachTrimPenaltyScale;
+      penalty += Math.max((low.flareTrimmedElevatorFraction || 0) - (targets.maxFlareTrimElevatorFraction || 1), 0) * flareTrimPenaltyScale;
       penalty += Math.max((targets.minFlareLoadFactor || 0) - (low.flareLoadFactor || 0), 0) * 220;
       penalty += Math.max((targets.minFlapLiftGainCl || 0) - (low.flapLiftGainAtApproachCl || 0), 0) * 260;
       penalty += Math.max((targets.minFlapStallReduction || 0) - (low.stallSpeedReduction || 0), 0) * 20;
       penalty += Math.max((targets.minApproachLiftToDrag || 0) - (low.approachLiftToDrag || 0), 0) * 120;
+      penalty += Math.max((low.freeAirWorstTrimFraction || 0) - (targets.maxFlareTrimElevatorFraction || 1), 0) * freeAirTrimPenaltyScale;
+      penalty += Math.max(0.12 - (low.freeAirMinLoadFactorMargin || 0), 0) * 180;
+      penalty += Math.max(0 - (low.freeAirMinLoadFactorMargin || 0), 0) * 360;
+      penalty += Math.max((low.maxFlapPitchPenaltyCoeff || 0) - 0.04, 0) * 1800;
+      penalty += Math.max((low.maxFlapForwardColShiftFracMac || 0) - 0.12, 0) * 650;
       penalty += Math.max((result.role.staticMarginMin || 0) - (result.staticMargin || 0), 0) * 300;
+      penalty += Math.pow(Math.max((result.staticMargin || 0) - staticMarginTarget, 0), 2) * 220;
+      penalty += Math.max((result.staticMargin || 0) - (staticMarginTarget + 0.12), 0) * 700;
       penalty += (result.solveability.closureCauses || []).length * 350;
       penalty += (result.solveability.landingCauses || []).length * 180;
       if (result.efficiency && !result.efficiency.onTarget && !result.efficiency.fuselageDominated) {
@@ -4923,12 +5386,48 @@
         elevatorChordFactor: clamp(baseBias.elevatorChordFactor * 1.22, baseBias.elevatorChordFactor, 1.35),
         flapChordFactor: clamp(baseBias.flapChordFactor * 0.84, 0.78, 1.35)
       });
+      add({
+        wingAreaFactor: clamp(baseBias.wingAreaFactor * 1.03, baseBias.wingAreaFactor, 3.2),
+        wingAspectRatioFactor: clamp(baseBias.wingAspectRatioFactor * 1.18, baseBias.wingAspectRatioFactor, 1.65),
+        tailAreaFactor: clamp(baseBias.tailAreaFactor * 1.42, baseBias.tailAreaFactor, 4.5),
+        flapSpanFactor: clamp(baseBias.flapSpanFactor * 0.92, 0.78, 1.55),
+        flapChordFactor: clamp(baseBias.flapChordFactor * 0.80, 0.72, 1.35),
+        elevatorSpanFactor: clamp(baseBias.elevatorSpanFactor * 1.20, baseBias.elevatorSpanFactor, 1.30),
+        elevatorChordFactor: clamp(baseBias.elevatorChordFactor * 1.24, baseBias.elevatorChordFactor, 1.35)
+      });
+      add({
+        wingAreaFactor: clamp(baseBias.wingAreaFactor * 1.08, baseBias.wingAreaFactor, 3.2),
+        wingAspectRatioFactor: clamp(baseBias.wingAspectRatioFactor * 1.24, baseBias.wingAspectRatioFactor, 1.65),
+        tailAreaFactor: clamp(baseBias.tailAreaFactor * 1.55, baseBias.tailAreaFactor, 4.5),
+        flapSpanFactor: clamp(baseBias.flapSpanFactor * 0.88, 0.76, 1.55),
+        flapChordFactor: clamp(baseBias.flapChordFactor * 0.78, 0.70, 1.35),
+        elevatorSpanFactor: clamp(baseBias.elevatorSpanFactor * 1.24, baseBias.elevatorSpanFactor, 1.30),
+        elevatorChordFactor: clamp(baseBias.elevatorChordFactor * 1.26, baseBias.elevatorChordFactor, 1.35)
+      });
+      add({
+        wingAreaFactor: clamp(baseBias.wingAreaFactor * 1.06, baseBias.wingAreaFactor, 3.2),
+        wingAspectRatioFactor: clamp(baseBias.wingAspectRatioFactor * 1.24, baseBias.wingAspectRatioFactor, 1.65),
+        tailAreaFactor: clamp(baseBias.tailAreaFactor * 0.92, 0.70, 4.5),
+        flapSpanFactor: clamp(baseBias.flapSpanFactor * 0.90, 0.76, 1.55),
+        flapChordFactor: clamp(baseBias.flapChordFactor * 0.76, 0.68, 1.35),
+        elevatorSpanFactor: clamp(baseBias.elevatorSpanFactor * 1.24, baseBias.elevatorSpanFactor, 1.30),
+        elevatorChordFactor: clamp(baseBias.elevatorChordFactor * 1.28, baseBias.elevatorChordFactor, 1.35)
+      });
+      add({
+        wingAreaFactor: clamp(baseBias.wingAreaFactor * 1.10, baseBias.wingAreaFactor, 3.2),
+        wingAspectRatioFactor: clamp(baseBias.wingAspectRatioFactor * 1.28, baseBias.wingAspectRatioFactor, 1.65),
+        tailAreaFactor: clamp(baseBias.tailAreaFactor * 0.86, 0.70, 4.5),
+        flapSpanFactor: clamp(baseBias.flapSpanFactor * 0.86, 0.72, 1.55),
+        flapChordFactor: clamp(baseBias.flapChordFactor * 0.72, 0.66, 1.35),
+        elevatorSpanFactor: clamp(baseBias.elevatorSpanFactor * 1.28, baseBias.elevatorSpanFactor, 1.30),
+        elevatorChordFactor: clamp(baseBias.elevatorChordFactor * 1.30, baseBias.elevatorChordFactor, 1.35)
+      });
       return candidates;
     }
 
     function solveDesign(inputs, bias = null, outerDepth = 0, allowRescueSearch = true) {
       const role = CONFIG.roles[inputs.aircraftType];
-      const grid = CONFIG.grids[inputs.gridType];
+      const grid = getEffectiveGrid(inputs.gridType, inputs.realisticMassOverride);
       const core = estimateCoreAircraft(inputs, role, grid);
       const q = computeDynamicPressure(inputs.cruiseSpeed);
       const g = CONFIG.atmosphere.g0 * inputs.gravityG;
@@ -4982,7 +5481,8 @@
       const effectiveXTolerance = Math.max(CONFIG.solver.xTolerance, grid.cell * 0.18);
 
       for (let iteration = 0; iteration < CONFIG.solver.maxIterations; iteration++) {
-        const weight = massGuess * g;
+        const sizingMass = getSizingMassKg(core.massKg, massGuess, role);
+        const weight = sizingMass * g;
         const areaFromWingLoading = weight / role.wingLoadingTarget;
         const areaFromCruiseCl = weight / (q * role.cruiseClTarget);
         const areaFromLanding = weight /
@@ -5344,8 +5844,13 @@
         xWingAc: lastIteration.xWingAc,
         xTailAc: lastIteration.xTailAc,
         cgX: lastIteration.cgX,
+        cgZ: blocksToMeters(getCoreCgHeightBlocks(lastIteration.inputs), grid),
+        wingForceZ: blocksToMeters(getWingMountHeightBlocks(lastIteration.inputs), grid),
+        tailForceZ: blocksToMeters(getTailMountHeightBlocks(lastIteration.inputs), grid),
         referenceArea: lastIteration.wingSystem.structuralArea,
         referenceChord: lastIteration.wingSystem.footprint.mac,
+        gridKey: grid.key,
+        resultRef: lastIteration,
         tailDeltaYMeters: 0,
         quickCamberSolve:
           quickPostSolve ||
@@ -5355,9 +5860,17 @@
       lastIteration.tailVerticalSeparationBlocks = tailHeightSolve.separationBlocks;
       lastIteration.tailVerticalSeparationMeters = tailHeightSolve.separationMeters;
       camberContext.tailDeltaYMeters = tailHeightSolve.separationMeters;
-      const camberSolve = tailHeightSolve.candidate || solveParCamberTargets(wingRowsBase, tailRowsBase, camberContext);
-      const wingRows = mapRowsToSlopeRecommendations(wingRowsBase, camberSolve.wingTarget, grid.key);
-      const tailRows = mapRowsToSlopeRecommendations(tailRowsBase, camberSolve.tailTarget, grid.key);
+      let camberSolve = tailHeightSolve.candidate || solveParCamberTargets(wingRowsBase, tailRowsBase, camberContext);
+      let wingRows = camberSolve.wingRows || mapRowsToSlopeRecommendations(wingRowsBase, camberSolve.wingTarget, grid.key);
+      let tailRows = camberSolve.tailRows || mapRowsToSlopeRecommendations(tailRowsBase, camberSolve.tailTarget, grid.key);
+      refineFinalCruiseTrimStations(lastIteration, wingRows, tailRows, grid);
+      camberContext.tailArm = Math.max(lastIteration.xTailAc - lastIteration.xWingAc, grid.cell);
+      camberContext.xWingAc = lastIteration.xWingAc;
+      camberContext.xTailAc = lastIteration.xTailAc;
+      camberContext.cgX = lastIteration.cgX;
+      camberSolve = solveParCamberTargets(wingRowsBase, tailRowsBase, camberContext);
+      wingRows = camberSolve.wingRows || mapRowsToSlopeRecommendations(wingRowsBase, camberSolve.wingTarget, grid.key);
+      tailRows = camberSolve.tailRows || mapRowsToSlopeRecommendations(tailRowsBase, camberSolve.tailTarget, grid.key);
       const cruiseState = evaluateAircraftPitchState(lastIteration, wingRows, tailRows, camberContext.speed, 0, null);
       const wingCruise = cruiseState.wingEval;
       const tailCruise = cruiseState.tailEval;
@@ -5401,6 +5914,7 @@
         tailBands: compressSlopeBands(tailRows),
         wingAchievedMean: wingRows.reduce((sum, row) => sum + row.rowCamber * row.area, 0) / Math.max(wingRows.reduce((sum, row) => sum + row.area, 0), 1),
         tailAchievedMean: tailRows.reduce((sum, row) => sum + row.rowCamber * row.area, 0) / Math.max(tailRows.reduce((sum, row) => sum + row.area, 0), 1),
+        discreteSolve: camberSolve,
         continuousSolve: camberSolve,
         mainCategory: camberCategory(clamp(camberSolve.wingTarget / 0.12, 0, 1)),
         tailCategory: tailCamberCategory(camberSolve.tailTarget)
@@ -5429,6 +5943,22 @@
       lastIteration.control.aileronVerdict = lastIteration.lowSpeed.aileronVerdict;
       lastIteration.control.rudderVerdict = lastIteration.lowSpeed.rudderVerdict;
       lastIteration.control.flapVerdict = lastIteration.lowSpeed.flapVerdict;
+      lastIteration.massBreakdown = {
+        controlHardwareMassKg:
+          lastIteration.wingSystem.aileron.mechanicalMassKg +
+          lastIteration.wingSystem.flap.mechanicalMassKg +
+          lastIteration.tailSystem.elevator.mechanicalMassKg +
+          lastIteration.finSystem.rudder.mechanicalMassKg,
+        structuralAddedMassKg:
+          lastIteration.wingSystem.structuralMassKg +
+          lastIteration.tailSystem.structuralMassKg +
+          lastIteration.finSystem.structuralMassKg
+      };
+      lastIteration.massBreakdown.addedAeroControlMassKg =
+        lastIteration.massBreakdown.controlHardwareMassKg +
+        lastIteration.massBreakdown.structuralAddedMassKg;
+      lastIteration.massBreakdown.controlHardwareToCoreMass =
+        lastIteration.massBreakdown.controlHardwareMassKg / Math.max(lastIteration.core.massKg, 1);
 
       const cruiseEfficiencyOnTarget = lastIteration.cruiseLD >= lastIteration.targetCruiseLD * 0.92;
       const cruiseEfficiencyFuselageDominated = lastIteration.fuselageDragFraction >= 0.68;
@@ -5481,7 +6011,9 @@
           lastIteration.trim.trimFraction > 0.55 ||
           lastIteration.lowSpeed.trimmedApproachElevatorFraction > lastIteration.lowSpeed.targets.maxApproachTrimElevatorFraction ||
           lastIteration.lowSpeed.flareTrimmedElevatorFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction ||
-          lastIteration.lowSpeed.flareLoadFactor < lastIteration.lowSpeed.targets.minFlareLoadFactor
+          lastIteration.lowSpeed.flareLoadFactor < lastIteration.lowSpeed.targets.minFlareLoadFactor ||
+          lastIteration.lowSpeed.freeAirWorstTrimFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction ||
+          lastIteration.lowSpeed.freeAirMinLoadFactorMargin < 0
         ) {
           nextBias.tailAreaFactor = clamp(nextBias.tailAreaFactor * 1.22, nextBias.tailAreaFactor, 4.5);
           nextBias.elevatorSpanFactor = clamp(nextBias.elevatorSpanFactor * 1.05, nextBias.elevatorSpanFactor, 1.30);
@@ -5500,6 +6032,16 @@
             nextBias.wingAreaFactor = clamp(nextBias.wingAreaFactor * 1.03, nextBias.wingAreaFactor, 3.2);
             nextBias.flapChordFactor = clamp(nextBias.flapChordFactor * 0.96, 0.78, 1.35);
           }
+          if (lastIteration.lowSpeed.freeAirWorstTrimFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction) {
+            nextBias.tailAreaFactor = clamp(nextBias.tailAreaFactor * 1.12, nextBias.tailAreaFactor, 4.5);
+            nextBias.elevatorSpanFactor = clamp(nextBias.elevatorSpanFactor * 1.08, nextBias.elevatorSpanFactor, 1.30);
+            nextBias.elevatorChordFactor = clamp(nextBias.elevatorChordFactor * 1.10, nextBias.elevatorChordFactor, 1.35);
+            nextBias.flapChordFactor = clamp(nextBias.flapChordFactor * 0.94, 0.72, 1.35);
+          }
+          if (lastIteration.lowSpeed.freeAirMinLoadFactorMargin < 0) {
+            nextBias.wingAreaFactor = clamp(nextBias.wingAreaFactor * 1.06, nextBias.wingAreaFactor, 3.2);
+            nextBias.wingAspectRatioFactor = clamp(nextBias.wingAspectRatioFactor * 1.08, nextBias.wingAspectRatioFactor, 1.65);
+          }
           shouldRerun = true;
         }
         if (lastIteration.lowSpeed.aileronVerdict === "weak") {
@@ -5510,7 +6052,9 @@
         if (
           lastIteration.lowSpeed.flapVerdict === "weak" ||
           lastIteration.lowSpeed.stallSpeedReduction < lastIteration.lowSpeed.targets.minFlapStallReduction ||
-          lastIteration.lowSpeed.flapLiftGainAtApproachCl < lastIteration.lowSpeed.targets.minFlapLiftGainCl
+          lastIteration.lowSpeed.flapLiftGainAtApproachCl < lastIteration.lowSpeed.targets.minFlapLiftGainCl ||
+          lastIteration.lowSpeed.maxFlapPitchPenaltyCoeff > 0.04 ||
+          lastIteration.lowSpeed.maxFlapForwardColShiftFracMac > 0.12
         ) {
           nextBias.wingAreaFactor = clamp(nextBias.wingAreaFactor * 1.08, nextBias.wingAreaFactor, 3.2);
           nextBias.wingAspectRatioFactor = clamp(nextBias.wingAspectRatioFactor * 1.08, nextBias.wingAspectRatioFactor, 1.65);
@@ -5523,6 +6067,16 @@
             nextBias.flapChordFactor = clamp(nextBias.flapChordFactor * 1.03, nextBias.flapChordFactor, 1.35);
           } else {
             nextBias.flapChordFactor = clamp(nextBias.flapChordFactor * 0.97, 0.78, 1.35);
+          }
+          if (
+            lastIteration.lowSpeed.maxFlapPitchPenaltyCoeff > 0.04 ||
+            lastIteration.lowSpeed.maxFlapForwardColShiftFracMac > 0.12
+          ) {
+            nextBias.tailAreaFactor = clamp(nextBias.tailAreaFactor * 1.14, nextBias.tailAreaFactor, 4.5);
+            nextBias.elevatorSpanFactor = clamp(nextBias.elevatorSpanFactor * 1.06, nextBias.elevatorSpanFactor, 1.30);
+            nextBias.elevatorChordFactor = clamp(nextBias.elevatorChordFactor * 1.08, nextBias.elevatorChordFactor, 1.35);
+            nextBias.flapSpanFactor = clamp(nextBias.flapSpanFactor * 0.96, 0.78, 1.55);
+            nextBias.flapChordFactor = clamp(nextBias.flapChordFactor * 0.90, 0.72, 1.35);
           }
           shouldRerun = true;
         }
@@ -5576,6 +6130,8 @@
       const landingCauses = [];
       const advisoryCauses = [];
       const trimTolerance = CONFIG.performance.trimFractionNearMissTolerance;
+      const preferredLandingTrim = hasPreferredLandingTrim(lastIteration.lowSpeed);
+      const adequateFreeAirFlareAuthority = hasAdequateFreeAirFlareAuthority(lastIteration.lowSpeed);
       if (cruiseLiftResidualFraction > 0.06 && Math.abs(verticalAcceleration) > 0.6) {
         closureCauses.push("Zero-pitch cruise lift balance could not be closed closely enough with the available PAR slope families on the synthesized wing and tail chord lengths.");
       }
@@ -5594,6 +6150,9 @@
       if (lastIteration.practicalWingLimits && lastIteration.practicalWingLimits.clamped) {
         closureCauses.push(`The requested cruise-speed lift area exceeded the practical healthy-AR wing limit for this fuselage. The solver capped the main wing at about ${fmtBlocks(lastIteration.practicalWingLimits.maxEffectiveBlocksTotal)} effective blocks total (${fmtBlocks(lastIteration.practicalWingLimits.peakRequestedEffectiveBlocks)} were requested).`);
       }
+      if (lastIteration.massBreakdown.controlHardwareToCoreMass > 1.0) {
+        closureCauses.push(`The assumed rotor/hinge control architecture is too heavy for this airframe scale: control-surface hardware alone weighs ${fmtMass(lastIteration.massBreakdown.controlHardwareMassKg)} versus a core aircraft mass of ${fmtMass(lastIteration.core.massKg)}. This geometry is mechanically dominated rather than aerodynamically sized; use a larger aircraft or a simplified control architecture.`);
+      }
       if (!lastIteration.lowSpeed.stallSolved) {
         landingCauses.push("The low-speed flap-down lift search could not find a stall-speed closure within the scanned speed range, so the current wing/high-lift geometry is too small for the requested mass and cruise condition.");
       } else if (lastIteration.lowSpeed.stallSpeed > lastIteration.lowSpeed.targetStallSpeed * 1.08) {
@@ -5604,10 +6163,24 @@
       } else if (lastIteration.lowSpeed.trimmedApproachElevatorFraction > lastIteration.lowSpeed.targets.maxApproachTrimElevatorFraction) {
         advisoryCauses.push(`Approach trim is slightly above the preferred designer target at ${fmtPercent(lastIteration.lowSpeed.trimmedApproachElevatorFraction)} versus ${fmtPercent(lastIteration.lowSpeed.targets.maxApproachTrimElevatorFraction)}.`);
       }
-      if (exceedsDesignTarget(lastIteration.lowSpeed.flareTrimmedElevatorFraction, lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction, trimTolerance)) {
+      if (
+        exceedsDesignTarget(lastIteration.lowSpeed.flareTrimmedElevatorFraction, lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction, trimTolerance) &&
+        !adequateFreeAirFlareAuthority
+      ) {
         landingCauses.push(`Deeper into the flare window at ${fmtSpeed(lastIteration.lowSpeed.flareCheckSpeed)}, trimmed flap-down flight still needs ${fmtPercent(lastIteration.lowSpeed.flareTrimmedElevatorFraction)} of full elevator travel. The designer target for this role is ${fmtPercent(lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction)} or less so that sink-arrest authority remains available before ground effect takes over.`);
       } else if (lastIteration.lowSpeed.flareTrimmedElevatorFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction) {
         advisoryCauses.push(`Flare-window trim is only slightly above the preferred designer target at ${fmtPercent(lastIteration.lowSpeed.flareTrimmedElevatorFraction)} versus ${fmtPercent(lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction)}.`);
+      }
+      if (
+        exceedsDesignTarget(lastIteration.lowSpeed.freeAirWorstTrimFraction, lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction, trimTolerance) &&
+        !adequateFreeAirFlareAuthority
+      ) {
+        landingCauses.push(`Across the free-air landing envelope, the worst trimmed flap-down point still needs ${fmtPercent(lastIteration.lowSpeed.freeAirWorstTrimFraction)} of elevator travel at ${fmtSpeed(lastIteration.lowSpeed.freeAirWorstTrimSpeed)}. The design should keep this below ${fmtPercent(lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction)} before ground effect helps.`);
+      } else if (lastIteration.lowSpeed.freeAirWorstTrimFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction && !preferredLandingTrim) {
+        advisoryCauses.push(`Across the free-air landing envelope, trimmed flap-down elevator demand peaks at ${fmtPercent(lastIteration.lowSpeed.freeAirWorstTrimFraction)} by ${fmtSpeed(lastIteration.lowSpeed.freeAirWorstTrimSpeed)}. The aircraft still has usable free-air flare authority, but this remains above the preferred designer trim target.`);
+      }
+      if (lastIteration.lowSpeed.freeAirMinLoadFactorMargin < 0) {
+        landingCauses.push(`Across the free-air landing envelope, the weakest trimmed flap-down point can only reach ${fmtNumber(1 + lastIteration.lowSpeed.freeAirMinLoadFactorMargin, 2)} g at ${fmtSpeed(lastIteration.lowSpeed.freeAirMinLoadFactorSpeed)}. The design still needs more low-speed lift and/or more remaining nose-up authority before touchdown.`);
       }
       if (lastIteration.lowSpeed.flareLoadFactor < lastIteration.lowSpeed.targets.minFlareLoadFactor) {
         landingCauses.push(`At the trimmed approach speed the aircraft can only reach ${fmtNumber(lastIteration.lowSpeed.flareLoadFactor, 2)} g in the PAR lift search with flaps deployed. The role target is at least ${fmtNumber(lastIteration.lowSpeed.targets.minFlareLoadFactor, 2)} g for a usable sink-arrest / flare margin.`);
@@ -5620,6 +6193,12 @@
         lastIteration.lowSpeed.flapLiftGainAtApproachCl < lastIteration.lowSpeed.targets.minFlapLiftGainCl
       ) {
         landingCauses.push(`The current flap system is not giving the expected net landing benefit. PAR lift gain at approach is only ${fmtNumber(lastIteration.lowSpeed.flapLiftGainAtApproachCl, 3)} CL and the flap-down stall reduction is ${fmtSpeed(lastIteration.lowSpeed.stallSpeedReduction)} versus targets of at least ${fmtNumber(lastIteration.lowSpeed.targets.minFlapLiftGainCl, 3)} CL or ${fmtSpeed(lastIteration.lowSpeed.targets.minFlapStallReduction)} improvement.`);
+      }
+      if (
+        lastIteration.lowSpeed.maxFlapPitchPenaltyCoeff > 0.04 ||
+        lastIteration.lowSpeed.maxFlapForwardColShiftFracMac > 0.12
+      ) {
+        landingCauses.push(`Full-flap deployment is still moving the equivalent center of lift too far forward. The worst flap-down pitch cost is ΔCm ${fmtNumber(lastIteration.lowSpeed.maxFlapPitchPenaltyCoeff, 3)} with about ${fmtPercent(lastIteration.lowSpeed.maxFlapForwardColShiftFracMac)} MAC of forward CoL shift, so more tail/elevator authority or less aggressive flap chord is still needed.`);
       }
       if (
         Math.abs(lastIteration.xWingAc - (inputs.fuselageLength * 0.18)) < 1e-6 ||
@@ -5767,6 +6346,8 @@
 
       const notes = [];
       const warnings = [];
+      const preferredLandingTrimNow = hasPreferredLandingTrim(lastIteration.lowSpeed);
+      const adequateFreeAirFlareAuthorityNow = hasAdequateFreeAirFlareAuthority(lastIteration.lowSpeed);
 
       const wing = lastIteration.wingSystem.footprint;
       const tail = lastIteration.tailSystem.footprint;
@@ -5816,7 +6397,10 @@
           body: `The trimmed flap-down approach state already uses ${fmtPercent(lastIteration.lowSpeed.trimmedApproachElevatorFraction)} of full elevator travel. The landing-envelope target for this role is ${fmtPercent(lastIteration.lowSpeed.targets.maxApproachTrimElevatorFraction)} or less so that flare reserve remains available.`
         });
       }
-      if (lastIteration.lowSpeed.flareTrimmedElevatorFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction) {
+      if (
+        lastIteration.lowSpeed.flareTrimmedElevatorFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction &&
+        !adequateFreeAirFlareAuthorityNow
+      ) {
         warnings.push({
           level: "warn",
           title: exceedsDesignTarget(lastIteration.lowSpeed.flareTrimmedElevatorFraction, lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction, CONFIG.performance.trimFractionNearMissTolerance)
@@ -5833,6 +6417,23 @@
           title: "Flare / sink-arrest margin is too small",
           body: `At ${fmtSpeed(lastIteration.lowSpeed.approachSpeed)} with flaps down, the trimmed PAR search can only reach about ${fmtNumber(lastIteration.lowSpeed.flareLoadFactor, 2)} g, versus a target of ${fmtNumber(lastIteration.lowSpeed.targets.minFlareLoadFactor, 2)} g. The design needs more low-speed lift and/or more remaining nose-up control margin.`
         });
+      }
+      if (
+        lastIteration.lowSpeed.maxFlapPitchPenaltyCoeff > 0.04 ||
+        lastIteration.lowSpeed.maxFlapForwardColShiftFracMac > 0.12
+      ) {
+        warnings.push({
+          level: "warn",
+          title: "Flap deployment still shifts lift too far forward",
+          body: `Across the free-air landing envelope, full flaps add up to ΔCm ${fmtNumber(lastIteration.lowSpeed.maxFlapPitchPenaltyCoeff, 3)} and about ${fmtPercent(lastIteration.lowSpeed.maxFlapForwardColShiftFracMac)} MAC of forward equivalent CoL shift. That still taxes flare authority more than the designer wants.`
+        });
+      }
+      if (
+        !preferredLandingTrimNow &&
+        adequateFreeAirFlareAuthorityNow &&
+        lastIteration.lowSpeed.freeAirWorstTrimFraction > lastIteration.lowSpeed.targets.maxFlareTrimElevatorFraction
+      ) {
+        notes.push(`Free-air flare trim peaks at ${fmtPercent(lastIteration.lowSpeed.freeAirWorstTrimFraction)} around ${fmtSpeed(lastIteration.lowSpeed.freeAirWorstTrimSpeed)}, which is above the preferred trim target but still inside the designer's acceptable sink-arrest envelope for this build.`);
       }
       if (lastIteration.lowSpeed.approachLiftToDrag < lastIteration.lowSpeed.targets.minApproachLiftToDrag) {
         warnings.push({
@@ -5855,6 +6456,13 @@
           level: "warn",
           title: "Rudder authority is low at approach speed",
           body: `Modeled rudder yaw coefficient is ${fmtNumber(lastIteration.lowSpeed.rudderCoeff, 3)} versus directional stability coefficient ${fmtNumber(lastIteration.lowSpeed.directionalStabilityCoeff, 3)}. Increase fin or rudder area for better runway alignment margin.`
+        });
+      }
+      if (lastIteration.massBreakdown.controlHardwareToCoreMass > 1.0) {
+        warnings.push({
+          level: "warn",
+          title: "Mechanical control hardware dominates this tiny aircraft",
+          body: `The current build assumption uses ${fmtMass(lastIteration.massBreakdown.controlHardwareMassKg)} of hinge/rotor hardware for flap, aileron, elevator, and rudder actuation against only ${fmtMass(lastIteration.core.massKg)} of core aircraft mass. For aircraft this small, the fixed mechanical package can dominate the design before the aerodynamics do.`
         });
       }
 
@@ -5930,6 +6538,7 @@
       notes.push(`Build each horizontal-tail side as a rectangular ${tail.sweepAngleDeg > 0.5 ? `swept ${fmtNumber(tail.sweepAngleDeg, 0)}°` : "unswept"} semi-tail outboard of the fuselage as well: ${fmtRectBlocks(tail.rootChordCells, tail.sideSpanCells)} per side. The schematic and the lift/drag/stability math assume left and right sides are separate PAR lift groups.`);
       notes.push(`Low-speed sizing targets a flap-down stall speed near ${fmtSpeed(lastIteration.lowSpeed.targetStallSpeed)} and an approach speed near ${fmtSpeed(lastIteration.lowSpeed.targetApproachSpeed)}. The current PAR estimate is ${fmtSpeed(lastIteration.lowSpeed.stallSpeed)} with an approach reference of ${fmtSpeed(lastIteration.lowSpeed.approachSpeed)}.`);
       notes.push(`Cruise efficiency is being checked against a target L/D of ${fmtNumber(lastIteration.targetCruiseLD, 1)}. Current cruise L/D is ${fmtNumber(lastIteration.cruiseLD, 1)}; approach L/D with 30° flaps is ${fmtNumber(lastIteration.lowSpeed.approachLiftToDrag, 1)}.`);
+      notes.push(`Use the flap schedule ${lastIteration.lowSpeed.flapSchedule.summary}. This keeps full 30° flaps for the real landing window instead of paying the full flap pitch cost too early.`);
       if (lastIteration.wingSystem.footprint.sweepAngleDeg > 0.5 || lastIteration.tailSystem.footprint.sweepAngleDeg > 0.5) {
         notes.push(`Sweep was enabled because PAR gives a Mach benefit through effective Mach = Mach × cos(sweep). The recommended sweep is ${fmtNumber(lastIteration.wingSystem.footprint.sweepAngleDeg, 0)}° on the wing and ${fmtNumber(lastIteration.tailSystem.footprint.sweepAngleDeg, 0)}° on the tail.`);
       } else if (inputs.optimizeSweep) {
@@ -6312,12 +6921,17 @@
         <div class="key">Flare check speed</div><div class="val">${fmtSpeed(result.lowSpeed.flareCheckSpeed)}</div>
         <div class="key">Trimmed elevator in flare window</div><div class="val">${fmtAngleRad(result.lowSpeed.flareTrimmedElevatorRad, 1)}</div>
         <div class="key">Flare-window elevator usage</div><div class="val">${fmtPercent(result.lowSpeed.flareTrimmedElevatorFraction)}</div>
+        <div class="key">Worst free-air flap trim</div><div class="val">${fmtPercent(result.lowSpeed.freeAirWorstTrimFraction)} @ ${fmtSpeed(result.lowSpeed.freeAirWorstTrimSpeed)}</div>
+        <div class="key">Weakest free-air lift margin</div><div class="val">${fmtNumber(1 + result.lowSpeed.freeAirMinLoadFactorMargin, 2)} g @ ${fmtSpeed(result.lowSpeed.freeAirMinLoadFactorSpeed)}</div>
         <div class="key">Approach alpha reduction</div><div class="val">${fmtAngleRad(result.lowSpeed.approachAlphaReduction, 2)}</div>
         <div class="key">Trimmed elevator at approach</div><div class="val">${fmtAngleRad(result.lowSpeed.trimmedApproachElevatorRad, 1)}</div>
         <div class="key">Approach elevator usage</div><div class="val">${fmtPercent(result.lowSpeed.trimmedApproachElevatorFraction)}</div>
         <div class="key">Lift gain at flap approach alpha</div><div class="val">${fmtNumber(result.control.flapDeltaCL, 3)}</div>
         <div class="key">Drag increase at flap approach alpha</div><div class="val">${fmtNumber(result.control.flapDeltaCD, 3)} CD</div>
         <div class="key">Pitch moment warning</div><div class="val">${fmtNumber(result.control.flapPitchDeltaCm, 3)} Cm</div>
+        <div class="key">Worst flap pitch cost</div><div class="val">${fmtNumber(result.lowSpeed.maxFlapPitchPenaltyCoeff, 3)} Cm</div>
+        <div class="key">Worst flap CoL shift</div><div class="val">${fmtPercent(result.lowSpeed.maxFlapForwardColShiftFracMac)} MAC</div>
+        <div class="key">Recommended flap schedule</div><div class="val">${result.lowSpeed.flapSchedule.summary}</div>
         <div class="key">Flap verdict</div><div class="val">${formatDisplayVerdict(result.control.flapVerdict)}</div>
       `;
 
@@ -6340,12 +6954,17 @@
         <div class="key">Flare gain from flaps</div><div class="val">${fmtNumber(result.lowSpeed.flareLoadFactorGain, 2)} g</div>
         <div class="key">Flare check speed</div><div class="val">${fmtSpeed(result.lowSpeed.flareCheckSpeed)}</div>
         <div class="key">Flare-window elevator usage</div><div class="val">${fmtPercent(result.lowSpeed.flareTrimmedElevatorFraction)}</div>
+        <div class="key">Worst free-air trim point</div><div class="val">${fmtPercent(result.lowSpeed.freeAirWorstTrimFraction)} @ ${fmtSpeed(result.lowSpeed.freeAirWorstTrimSpeed)}</div>
+        <div class="key">Weakest free-air lift point</div><div class="val">${fmtNumber(1 + result.lowSpeed.freeAirMinLoadFactorMargin, 2)} g @ ${fmtSpeed(result.lowSpeed.freeAirMinLoadFactorSpeed)}</div>
         <div class="key">Neutral flap Cm in flare window</div><div class="val">${fmtNumber(result.lowSpeed.flareNeutralMomentCoeff, 3)}</div>
         <div class="key">Approach L/D clean / flap</div><div class="val">${fmtNumber(result.lowSpeed.cleanApproachLiftToDrag, 1)} / ${fmtNumber(result.lowSpeed.approachLiftToDrag, 1)}</div>
         <div class="key">Elevator ΔCm</div><div class="val">${fmtNumber(result.lowSpeed.elevatorDeltaCm, 3)}</div>
         <div class="key">Aileron roll coeff</div><div class="val">${fmtNumber(result.lowSpeed.aileronCoeff, 3)}</div>
         <div class="key">Rudder yaw coeff</div><div class="val">${fmtNumber(result.lowSpeed.rudderCoeff, 3)}</div>
         <div class="key">Fin directional coeff</div><div class="val">${fmtNumber(result.lowSpeed.directionalStabilityCoeff, 3)}</div>
+        <div class="key">Worst flap pitch cost</div><div class="val">${fmtNumber(result.lowSpeed.maxFlapPitchPenaltyCoeff, 3)} Cm</div>
+        <div class="key">Worst flap CoL shift</div><div class="val">${fmtPercent(result.lowSpeed.maxFlapForwardColShiftFracMac)} MAC</div>
+        <div class="key">Flap schedule</div><div class="val">${result.lowSpeed.flapSchedule.summary}</div>
         <div class="key">Approach lift solve</div><div class="val">${result.lowSpeed.approachResolved ? "closed" : "best residual"}</div>
       `;
     }
@@ -6357,8 +6976,8 @@
       const tailAchieved = result.camber.tailAchievedMean;
 
       elements.camberWingText.innerHTML = `
-        The PAR-grounded zero-pitch cruise solve wants a mean main-wing row camber of
-        <strong>${fmtAngleRad(wingTarget, 2)}</strong>; the discrete slope layout actually achieves
+        The discrete final-geometry PAR solve wants a mean main-wing row camber near
+        <strong>${fmtAngleRad(wingTarget, 2)}</strong>; the actual recommended slope layout achieves
         <strong>${fmtAngleRad(wingAchieved, 2)}</strong>. This is based on PAR's real strip model:
         row camber uses equal leading/trailing weighting and the strip path uses
         <strong>effective alpha = 0.5 × row camber</strong>. The objective is to get as close as possible
@@ -6367,8 +6986,8 @@
       `;
 
       elements.camberTailText.innerHTML = `
-        The tail solve wants a mean tail row camber of <strong>${fmtAngleRad(tailTarget, 2)}</strong>;
-        the discrete elevator/tail layout achieves <strong>${fmtAngleRad(tailAchieved, 2)}</strong>.
+        The tail solve wants a mean tail row camber near <strong>${fmtAngleRad(tailTarget, 2)}</strong>;
+        the actual discrete elevator/tail layout achieves <strong>${fmtAngleRad(tailAchieved, 2)}</strong>.
         At zero pitch this yields a modeled tail CL of <strong>${fmtNumber(result.trim.requiredTailCl, 3)}</strong>
         after PAR downwash from the wing. Negative tail camber means tail downforce and therefore
         a nose-up contribution; positive tail camber means upward tail lift and therefore a nose-down contribution.
@@ -7000,10 +7619,6 @@
     function bindEvents() {
       elements.solveBtn.addEventListener("click", recomputeDesign);
       elements.resetBtn.addEventListener("click", () => {
-        if (recomputeTimer) {
-          clearTimeout(recomputeTimer);
-          recomputeTimer = null;
-        }
         applyDefaults();
         recomputeDesign();
       });
@@ -7011,12 +7626,6 @@
         preservePhysicalGeometryAcrossGridChange(lastGridType, elements.gridType.value);
         lastGridType = elements.gridType.value;
         updateGridUnitContext();
-      });
-      elements.form.addEventListener("input", () => {
-        scheduleRecompute();
-      });
-      elements.form.addEventListener("change", () => {
-        scheduleRecompute();
       });
     }
 
