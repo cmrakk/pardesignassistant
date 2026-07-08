@@ -506,6 +506,10 @@
         mass/control hardware assumptions, body drag model, downwash, and trim checks. The browser
         model is deterministic and transparent, but live world XML/profile overrides still need
         in-game validation.
+        <br><small>Model parity: PAR 2026-07-07 physics — corrected quarter-chord AC couples,
+        continuous Prandtl&#8211;Glauert, deflection saturation, &#8730;(cf/c) relative-AoA retention
+        with slot-effect stall bonus, Mach stall-onset scaling, McCormick ground effect with downwash
+        suppression, slender-body lift + destabilizing Munk moment, updated post-stall CL table.</small>
       </p>
     </div>
   </header>
@@ -648,11 +652,37 @@
       machTuckPeakChordFraction: 0.20,
       machTuckSettledChordFraction: 0.22,
       machCmCamberPeakMultiplier: 1.5,
-      stripCamberCLMaxBoostPerRad: 0.95,
-      flapNearStallCLBoostPerRad: 1.5,
+      // Matches AeroConstants.StripCamberCLMaxBoostPerRad (1.8 per rad of
+      // HALF-camber, i.e. of the camberAlpha the strip model actually applies).
+      stripCamberCLMaxBoostPerRad: 1.8,
+      // Single-slotted-class CLmax credit (matches the mod's slot stall-delay
+      // half); raised from 1.5 so flaps NET a stall-speed reduction after the
+      // trim download on short-tail-arm SE builds.
+      flapNearStallCLBoostPerRad: 3.0,
       deflectionCamberFactor: 1.0,
       deflectionDecayRate: 1.0,
+      // FLOOR of the retained hinge-deflection fraction; actual retention is
+      // max(sqrt(cf/c), floor) — matches the mod's relative-AoA rework.
       relativeAoAFraction: 0.4,
+      // Deflection-effectiveness saturation (DATCOM plain-flap): camber
+      // transfer is linear to ~12 deg, then 0.4 slope beyond.
+      deflectionSaturationOnsetRad: 0.2094,
+      deflectionSaturationSlope: 0.4,
+      // Slot effect: deflected control surface behind a fixed row gets a
+      // stall-onset bonus, ramping in over the first ~10 deg of deflection.
+      flapSlotStallBonusDeg: 12,
+      flapSlotFullBonusDeflectionRad: 0.1745,
+      // High-Mach stall onset reduction (shock-induced separation).
+      machStallReductionStart: 0.7,
+      machStallReductionAmount: 0.25,
+      // Slender-body / Munk constants (AeroComputer body block).
+      bodyLiftSlope: 1.8,
+      munkMomentCoefficient: 0.6,
+      bodyVolumeFillFactor: 0.5,
+      bodyShapeMinFineness: 1.0,
+      bodyShapeFullFineness: 4.0,
+      munkShapeFullFineness: 3.0,
+      bodyLiftFadeFullAlphaRad: 0.01,
       downwashNearFieldDist: 2.0,
       downwashDecayLength: 7.0,
       downwashVerticalDecayLength: 15.0,
@@ -679,6 +709,11 @@
       }
     };
 
+    // NOTE: controlIndex thresholds are calibrated against
+    // estimateControlAuthority evaluated at 25 deg deflection. The mod's
+    // deflection saturation (linear to 12 deg, 0.4 slope beyond) reduces the
+    // computed index at that reference point by ~0.69x, so these thresholds
+    // carry the same rescale to preserve the original pass/fail intent.
     const ROLES = {
       trainer: {
         label: "Trainer / utility",
@@ -694,7 +729,7 @@
         aileronSpan: 0.34,
         tailAreaRatio: 0.28,
         finAreaRatio: 0.105,
-        controlIndex: 0.20
+        controlIndex: 0.14
       },
       multirole: {
         label: "Multirole",
@@ -710,7 +745,7 @@
         aileronSpan: 0.36,
         tailAreaRatio: 0.26,
         finAreaRatio: 0.095,
-        controlIndex: 0.23
+        controlIndex: 0.16
       },
       fighter: {
         label: "Fighter / interceptor",
@@ -726,7 +761,7 @@
         aileronSpan: 0.45,
         tailAreaRatio: 0.30,
         finAreaRatio: 0.11,
-        controlIndex: 0.31
+        controlIndex: 0.22
       },
       bomber: {
         label: "Bomber / heavy",
@@ -742,7 +777,7 @@
         aileronSpan: 0.28,
         tailAreaRatio: 0.30,
         finAreaRatio: 0.115,
-        controlIndex: 0.18
+        controlIndex: 0.13
       },
       stol: {
         label: "STOL / slow-speed",
@@ -758,7 +793,7 @@
         aileronSpan: 0.26,
         tailAreaRatio: 0.32,
         finAreaRatio: 0.105,
-        controlIndex: 0.19
+        controlIndex: 0.13
       }
     };
 
@@ -766,7 +801,9 @@
       alpha: [0, 4, 8, 12, 14, 16, 20, 25, 30, 45, 60, 90],
       stripCL: [0, 0.42, 0.85, 1.10, 1.20, 1.30, 1.10, 0.90, 0.75, 0.55, 0.30, 0],
       stalledAlpha: [0, 13, 18, 22, 25, 30, 45, 60, 90],
-      stripStalledCL: [0, 0.67, 0.82, 0.82, 0.70, 0.60, 0.50, 0.30, 0],
+      // Matches LiftDragCurves.CL_Strip_Stalled_Values (post-stall sharpened:
+      // ~54% CLmax drop, replacing the old 0.82 "wooden" plateau).
+      stripStalledCL: [0, 0.67, 0.60, 0.60, 0.55, 0.50, 0.45, 0.30, 0],
       cdAlpha: [0, 5, 10, 15, 20, 30, 45, 60, 75, 90],
       cd0: [0.004, 0.006, 0.012, 0.04, 0.10, 0.32, 0.78, 1.05, 1.15, 1.20]
     };
@@ -1208,8 +1245,16 @@
     }
 
     function generateWingStarts(input) {
+      // Bracket wing placement so its QUARTER-CHORD (the effective lift
+      // position under the corrected AC physics) can range from ~0.75 chord
+      // ahead of coreCog to ~2.25 chords behind it. The aircraft CoM lands
+      // well aft of coreCog (structure, tail mechanics), and the wing AC must
+      // end up near/behind the CoM for positive static margin — the previous
+      // range (tuned when effective lift sat at ~72% chord) could not reach
+      // stable placements at all. Iterated aft-first so the stable region is
+      // explored before the search budget cap.
       const starts = [];
-      for (let aheadFrac = -0.45; aheadFrac <= 0.74; aheadFrac += 0.08) {
+      for (let aheadFrac = -2.25; aheadFrac <= 0.5; aheadFrac += 0.11) {
         starts.push({ aheadFrac });
       }
       return starts;
@@ -1658,11 +1703,29 @@
         _liftMomentForCol: 0
       };
 
+      // Control-surface modeling matches the mod's split:
+      //  - FIXED cells of a control's rows receive the (saturated) Glauert
+      //    camber transfer and the near-stall flap boost;
+      //  - the MOVING cells fly at alpha + retention x RAW deflection
+      //    (retention = max(sqrt(cf/c), 0.4)) with the hinge-gap slot stall
+      //    bonus, and no self-applied transfer camber.
       const flapDeflCamber = controlDeflectionCamber(design.wing.chord, design.controls.flapChord, state.flapDeg);
       const elevatorDeflCamber = controlDeflectionCamber(design.tail.chord, design.controls.elevatorChord, state.elevatorDeg);
+      const flapRetention = relativeRetention(design.wing.chord, design.controls.flapChord);
+      const elevatorRetention = relativeRetention(design.tail.chord, design.controls.elevatorChord);
+      const flapDeflRaw = degToRad(state.flapDeg);
+      const elevatorDeflRaw = degToRad(state.elevatorDeg);
 
-      const wingBaseArea = Math.max(design.area.wingEffectiveM2 - design.area.flapM2, design.area.wingEffectiveM2 * 0.45);
+      const cellArea = cell * cell;
+      const flapRowFixedM2 = Math.min(
+        2 * design.controls.flapSpan * Math.max(design.wing.chord - design.controls.flapChord, 0) * cellArea,
+        design.area.wingEffectiveM2 * 0.6
+      );
       const flapArea = design.area.flapM2;
+      const wingBaseArea = Math.max(
+        design.area.wingEffectiveM2 - flapArea - flapRowFixedM2,
+        design.area.wingEffectiveM2 * 0.25
+      );
 
       const wingBase = surfaceForces({
         name: "Main wing fixed + aileron rows",
@@ -1686,13 +1749,13 @@
       });
       addSurface(result, wingBase, cogM, cogY);
 
-      const wingFlap = surfaceForces({
-        name: "Main wing flap rows",
-        area: flapArea,
+      const wingFlapFixed = surfaceForces({
+        name: "Flap-row fixed cells (camber transfer)",
+        area: flapRowFixedM2,
         chord: design.wing.chord * cell,
         chordCells: design.wing.chord,
         ar: design.wing.ar,
-        x: (design.wing.start + design.wing.chord - design.controls.flapChord * 0.5) * cell,
+        x: (design.wing.start + Math.max(design.wing.chord - design.controls.flapChord, 1) * 0.5) * cell,
         y: design.wing.rootHeight * cell,
         alphaRad,
         camberRad: design.wing.camberRad,
@@ -1706,7 +1769,30 @@
         wingspan: design.wing.span * cell * 2,
         input
       });
-      addSurface(result, wingFlap, cogM, cogY);
+      addSurface(result, wingFlapFixed, cogM, cogY);
+
+      const wingFlapMoving = surfaceForces({
+        name: "Flap surfaces (moving cells)",
+        area: flapArea,
+        chord: design.wing.chord * cell,
+        chordCells: design.wing.chord,
+        ar: design.wing.ar,
+        x: (design.wing.start + design.wing.chord - design.controls.flapChord * 0.5) * cell,
+        y: design.wing.rootHeight * cell,
+        alphaRad: alphaRad + flapRetention * flapDeflRaw,
+        camberRad: design.wing.camberRad,
+        deflectionCamberRad: 0,
+        slotBonusDeg: slotStallBonusDeg(flapDeflRaw),
+        sweepRad: 0,
+        speed,
+        rho,
+        streamlining: 0.50,
+        downwash: 0,
+        groundEffect: state.groundEffect,
+        wingspan: design.wing.span * cell * 2,
+        input
+      });
+      addSurface(result, wingFlapMoving, cogM, cogY);
 
       const verticalFin = surfaceForces({
         name: "Vertical fin + rudder rows",
@@ -1730,12 +1816,20 @@
       });
       addSurface(result, verticalFin, cogM, cogY);
 
-      const wingCLForDownwash = weightedCL([wingBase, wingFlap]);
-      const downwash = computeDownwash(design, input, wingCLForDownwash);
+      const wingCLForDownwash = weightedCL([wingBase, wingFlapFixed, wingFlapMoving]);
+      let downwash = computeDownwash(design, input, wingCLForDownwash);
+      if (state.groundEffect && input.groundEffect) {
+        // The mod scales tail downwash by (1 - sigma) in ground effect —
+        // the image-vortex suppression that produces the flare nose-drop cue.
+        downwash *= groundEffect(
+          design.wing.span * cell * 2,
+          Math.max(design.wing.rootHeight * cell, 0.1)
+        ).downwash;
+      }
 
       const tailFixedArea = Math.max(design.area.tailEffectiveM2 - design.area.elevatorM2, design.area.tailEffectiveM2 * 0.42);
       const tailFixed = surfaceForces({
-        name: "Horizontal tail fixed rows",
+        name: "Horizontal tail fixed rows (camber transfer)",
         area: tailFixedArea,
         chord: design.tail.chord * cell,
         chordCells: design.tail.chord,
@@ -1744,7 +1838,7 @@
         y: design.tail.rootHeight * cell,
         alphaRad,
         camberRad: design.tail.camberRad,
-        deflectionCamberRad: 0,
+        deflectionCamberRad: elevatorDeflCamber,
         sweepRad: 0,
         speed,
         rho,
@@ -1756,19 +1850,18 @@
       });
       addSurface(result, tailFixed, cogM, cogY);
 
-      const relativeReduction = Math.abs(degToRad(state.elevatorDeg)) * (1 - CONST.relativeAoAFraction);
-      const elevatorAlpha = reduceRelativeAlpha(alphaRad, relativeReduction);
       const elevator = surfaceForces({
-        name: "Elevator rows",
+        name: "Elevator surfaces (moving cells)",
         area: design.area.elevatorM2,
         chord: design.tail.chord * cell,
         chordCells: design.tail.chord,
         ar: design.tail.ar,
         x: (design.tail.start + design.tail.chord - design.controls.elevatorChord * 0.48) * cell,
         y: design.tail.rootHeight * cell,
-        alphaRad: elevatorAlpha,
+        alphaRad: alphaRad + elevatorRetention * elevatorDeflRaw,
         camberRad: design.tail.camberRad,
-        deflectionCamberRad: elevatorDeflCamber,
+        deflectionCamberRad: 0,
+        slotBonusDeg: slotStallBonusDeg(elevatorDeflRaw),
         sweepRad: 0,
         speed,
         rho,
@@ -1805,7 +1898,10 @@
       const fullCamber = opts.camberRad + opts.deflectionCamberRad;
       const camberAlpha = fullCamber * 0.5;
       const effectiveAlpha = opts.alphaRad + camberAlpha - (opts.downwash || 0);
-      const cl2d = stripCLWithStall(effectiveAlpha, opts.deflectionCamberRad, camberAlpha);
+      const cl2d = stripCLWithStall(effectiveAlpha, opts.deflectionCamberRad, camberAlpha, {
+        machStallScale: machStallScale(effectiveMach),
+        slotBonusDeg: opts.slotBonusDeg || 0
+      });
       const arFactor = finiteWingFactor(opts.ar);
       const re = opts.rho * opts.speed * Math.max(opts.chord, 0.05) / CONST.mu;
       const reFactor = clamp(re / CONST.reTransition, 0, 1);
@@ -1833,11 +1929,21 @@
       const cmMachMult = mach > CONST.machTuckOnset
         ? 1 + (CONST.machCmCamberPeakMultiplier - 1) * clamp((mach - CONST.machTuckOnset) / (1 - CONST.machTuckOnset), 0, 1)
         : 1;
-      const rowCL = Math.abs(cl / Math.max(input.liftMultiplier, 0.001));
-      const cmCamber = -Math.PI * 0.5 * opts.camberRad * input.camberMultiplier * cmMachMult;
-      const cmCentroid = -0.25 * rowCL;
+      // Matches the corrected mod row-couple physics:
+      //  - cmCamber = -pi/4 x rowCamber (INCLUDING deflection camber, with
+      //    the config multiplier applied to the static part only), nose-down
+      //    for positive camber;
+      //  - cmCentroid = +0.25 x SIGNED CL: panel lift acts near mid-chord,
+      //    and this couple moves it forward to the 25% AC. (The old -0.25
+      //    with |CL| reproduced a sign bug that placed effective lift at
+      //    ~75% chord — it skewed every static-margin and trim prediction.)
+      //  - tuck uses SIGNED CL so downforce-carrying tails tuck correctly.
+      const rowCLSigned = cl / Math.max(input.liftMultiplier, 0.001);
+      const rowCamberForCm = opts.camberRad * input.camberMultiplier + opts.deflectionCamberRad;
+      const cmCamber = -Math.PI * 0.25 * rowCamberForCm * cmMachMult;
+      const cmCentroid = 0.25 * rowCLSigned;
       const cmMoment = (cmCamber + cmCentroid) * q * opts.area * opts.chord * input.liftMultiplier;
-      const tuckMoment = -rowCL * q * opts.area * machTuckFraction(mach) * opts.chord * input.liftMultiplier;
+      const tuckMoment = -rowCLSigned * q * opts.area * machTuckFraction(mach) * opts.chord * input.liftMultiplier;
 
       return {
         name: opts.name,
@@ -1884,13 +1990,42 @@
       const reFactor = clamp(re / CONST.reTransition, 0, 1);
       const skinDrag = q * wettedArea * CONST.skinFrictionCD * lerp(CONST.reMaxCD0, 1, reFactor) * machDragMultiplier(mach) * input.dragMultiplier;
 
+      // Slender-body lift + Munk moment, matching the mod's body block:
+      //   L_body = q · A_base · BodyLiftSlope · shapeQuality · alpha
+      //   M_munk = MunkCoeff · finenessFactor · q · V_body · sin(2 alpha)
+      // The Munk moment is DESTABILIZING (nose-up for alpha > 0) — the
+      // previous ad-hoc "stabilizingMoment" here had the opposite sign of
+      // the real model and skewed static-margin predictions for chunky
+      // fuselages. Both terms fade in smoothly over the first ~0.57 deg of
+      // body alpha (the mod's smoothstep onset, replacing its old hard gate).
       const alphaRad = degToRad(alphaDeg);
-      const sideArea = lengthM * widthM;
-      const bodyLift = q * sideArea * CONST.crossflowK * alphaRad * 0.5 * input.dragMultiplier;
-      const xBody = input.fuselageLength * cell * 0.52;
+      const mCL = machCLMultiplier(mach);
+      const streamlinedFactor = clamp(input.streamliningPct / 100, 0, 1) * 0.8;
+      const shapeFinenessFactor = clamp(
+        (fineness - CONST.bodyShapeMinFineness)
+          / (CONST.bodyShapeFullFineness - CONST.bodyShapeMinFineness),
+        0, 1
+      );
+      const shapeQuality = streamlinedFactor * shapeFinenessFactor;
+      const fadeT = Math.min(Math.abs(alphaRad) / CONST.bodyLiftFadeFullAlphaRad, 1);
+      const bodyAlphaFade = fadeT * fadeT * (3 - 2 * fadeT);
+
+      const bodyLift = q * frontalArea * CONST.bodyLiftSlope * shapeQuality
+        * alphaRad * mCL * bodyAlphaFade * input.liftMultiplier;
+
+      const munkFinenessFactor = clamp(
+        (fineness - CONST.bodyShapeMinFineness)
+          / (CONST.munkShapeFullFineness - CONST.bodyShapeMinFineness),
+        0, 1
+      );
+      const bodyVolume = lengthM * frontalArea * CONST.bodyVolumeFillFactor;
+      const munkMoment = CONST.munkMomentCoefficient * munkFinenessFactor
+        * q * bodyVolume * Math.sin(2 * alphaRad) * mCL * bodyAlphaFade
+        * input.liftMultiplier;
+
+      const xBody = input.fuselageLength * cell * 0.5;
       const cogM = design.mass.cogBlocks * cell;
-      const stabilizingMoment = -0.018 * q * frontalArea * lengthM * alphaRad;
-      const moment = bodyLift * (cogM - xBody) + stabilizingMoment;
+      const moment = bodyLift * (cogM - xBody) + munkMoment;
 
       return {
         name: "Fuselage/body",
@@ -1899,6 +2034,7 @@
         formDrag,
         skinDrag,
         moment,
+        munkMoment,
         x: xBody,
         y: input.fuselageHeight * cell * 0.5,
         cdForm,
@@ -1975,28 +2111,54 @@
       const tailAC = design.tail.start + design.tail.chord * 0.25;
       const wingLiftSlope = design.area.wingEffectiveM2 * finiteWingFactor(design.wing.ar);
       const tailArmM = Math.max((tailAC - wingAC) * cell, cell);
+      // d(epsilon)/d(alpha) = 2 · CLalpha_3D / (pi · e · AR) with the strip
+      // lift slope ~6.0/rad × AR factor (the previous version omitted the
+      // lift slope, underestimating the gradient ~6x and over-crediting
+      // tail effectiveness in this quick search-seeding estimate).
       const downwashGradient = clamp(
-        2 * finiteWingFactor(design.wing.ar) / (Math.PI * CONST.oswald * Math.max(design.wing.ar, 0.5))
+        12 * finiteWingFactor(design.wing.ar) / (Math.PI * CONST.oswald * Math.max(design.wing.ar, 0.5))
         * (1 / (1 + Math.max(tailArmM - CONST.downwashNearFieldDist, 0) / CONST.downwashDecayLength)),
         0,
         0.75
       );
       const tailLiftSlope = design.area.tailEffectiveM2 * finiteWingFactor(design.tail.ar) * (1 - downwashGradient);
-      const bodyDestabilizer = design.area.wingEffectiveM2 * 0.04 * input.fuselageWidth / Math.max(input.fuselageLength, 1);
+      // Munk destabilization as a neutral-point forward shift, in the same
+      // area-weighted units as the slopes (dM/dα_munk = 2·k·q·V_body with
+      // k = 0.6·finenessFactor; divided by q·CLα(≈6/rad)·Σ(A·arF)·cell):
+      // keeps this fast filter consistent with the full evaluator's body
+      // moment so the shortlist doesn't overrate marginal designs.
+      const frontalM2 = Math.max(input.fuselageWidth * input.fuselageHeight * cell * cell, 0.01);
+      const eqDiameter = 2 * Math.sqrt(frontalM2 / Math.PI);
+      const fineness = (input.fuselageLength * cell) / Math.max(eqDiameter, 0.1);
+      const munkFF = clamp(
+        (fineness - CONST.bodyShapeMinFineness)
+          / (CONST.munkShapeFullFineness - CONST.bodyShapeMinFineness),
+        0, 1
+      );
+      const bodyVolumeM3 = input.fuselageLength * cell * frontalM2 * CONST.bodyVolumeFillFactor;
+      const munkNPShiftBlocks = 0.2 * munkFF * bodyVolumeM3
+        / (Math.max(wingLiftSlope + tailLiftSlope, 0.01) * cell);
       const neutralPoint = (wingLiftSlope * wingAC + tailLiftSlope * tailAC)
-        / Math.max(wingLiftSlope + tailLiftSlope - bodyDestabilizer, 1e-4);
+        / Math.max(wingLiftSlope + tailLiftSlope, 1e-4)
+        - munkNPShiftBlocks;
       return clamp((neutralPoint - design.mass.cogBlocks) / Math.max(design.wing.chord, 1), -0.25, 0.35);
     }
 
     function estimateStaticMargin(design, input) {
-      const e = 0;
-      const mMinus = evaluateAircraft(design, input, { speed: input.cruiseSpeed, alphaDeg: -1, flapDeg: 0, elevatorDeg: e, groundEffect: false }).moment;
-      const mPlus = evaluateAircraft(design, input, { speed: input.cruiseSpeed, alphaDeg: 1, flapDeg: 0, elevatorDeg: e, groundEffect: false }).moment;
-      const dMda = (mPlus - mMinus) / degToRad(2);
-      const q = dynamicPressure(input.airDensity, input.cruiseSpeed);
-      const sRef = Math.max(design.area.wingEffectiveM2, 1);
+      // Static margin by its definition: SM = -(dM/dalpha) / (dL/dalpha · c),
+      // i.e. (neutral point - CoG) in mean-chord units, with BOTH derivatives
+      // measured numerically from the same evaluations. No calibration
+      // constant — the previous fixed divisor (14.5) was tuned against the
+      // pre-fix physics (whose inverted centroid couple roughly tripled the
+      // apparent pitch stiffness) and underestimated true margins ~2.6x
+      // after the correction, which made the optimizer chase near-neutral
+      // designs while believing them stable.
+      const evalMinus = evaluateAircraft(design, input, { speed: input.cruiseSpeed, alphaDeg: -1, flapDeg: 0, elevatorDeg: 0, groundEffect: false });
+      const evalPlus = evaluateAircraft(design, input, { speed: input.cruiseSpeed, alphaDeg: 1, flapDeg: 0, elevatorDeg: 0, groundEffect: false });
+      const dMda = (evalPlus.moment - evalMinus.moment) / degToRad(2);
+      const dLda = (evalPlus.lift - evalMinus.lift) / degToRad(2);
       const cRef = Math.max(design.wing.chord * input.grid.cell, 0.1);
-      return clamp(-dMda / Math.max(q * sRef * cRef * 14.5, 1), -0.25, 0.35);
+      return clamp(-dMda / Math.max(dLda * cRef, 1), -0.25, 0.35);
     }
 
     function estimateStallSpeedQuick(design, input, flapDeg) {
@@ -2086,7 +2248,10 @@
         decaySum += Math.exp(-CONST.deflectionDecayRate * distNorm);
       }
       const avgDecay = decaySum / Math.max(totalChordCells, 1);
-      return degToRad(deflectionDeg) * gf * avgDecay;
+      // The mod SATURATES the hinge angle before the Glauert transfer
+      // (linear to ~12 deg, 0.4 slope beyond) — large throws are no longer
+      // linearly effective.
+      return saturateDeflection(degToRad(deflectionDeg)) * gf * avgDecay;
     }
 
     function computeDownwash(design, input, wingCL) {
@@ -2110,28 +2275,38 @@
       return parts.reduce((sum, p) => sum + p.cl * p.area, 0) / area;
     }
 
-    function stripCLWithStall(alphaRad, deflectionCamber, camberAlpha) {
+    function stripCLWithStall(alphaRad, deflectionCamber, camberAlpha, opts) {
+      // Steady-state strip CL matching AeroComputer's panel pipeline:
+      //  - stall onset scales with Mach (shock-induced separation) and gains
+      //    the hinge-gap slot bonus on deflected control surfaces;
+      //  - camber CLmax boost is SIGNED by lift direction (operating against
+      //    the camber, e.g. inverted, is a penalty, not a boost);
+      //  - the near-stall flap boost only helps camber-aligned lift and is
+      //    anchored to the LIVE onset threshold.
+      const stallScale = opts && opts.machStallScale !== undefined ? opts.machStallScale : 1;
+      const slotBonus = opts && opts.slotBonusDeg ? opts.slotBonusDeg : 0;
+      const onsetDeg = CONST.stallOnsetDeg * stallScale + slotBonus;
       const absDeg = Math.abs(radToDeg(alphaRad));
       let clNormal = signedTable(TABLES.alpha, TABLES.stripCL, alphaRad);
       let clStalled = signedTable(TABLES.stalledAlpha, TABLES.stripStalledCL, alphaRad);
       let cl;
-      const blendStart = CONST.stallOnsetDeg - CONST.stripBlendDeg;
+      const blendStart = onsetDeg - CONST.stripBlendDeg;
       if (absDeg <= blendStart) {
         cl = clNormal;
-      } else if (absDeg <= CONST.stallOnsetDeg) {
+      } else if (absDeg <= onsetDeg) {
         const t = (absDeg - blendStart) / CONST.stripBlendDeg;
         cl = lerp(clNormal, clStalled, t);
       } else {
         cl = clStalled;
       }
 
-      if (Math.abs(camberAlpha) > 0.0001) {
-        cl *= Math.max(1 + camberAlpha * CONST.stripCamberCLMaxBoostPerRad, 0.5);
+      if (Math.abs(camberAlpha) > 0.0001 && cl !== 0) {
+        cl *= Math.max(1 + Math.sign(cl) * camberAlpha * CONST.stripCamberCLMaxBoostPerRad, 0.5);
       }
 
       const flapHighLift = Math.max(deflectionCamber, 0);
-      if (flapHighLift > 0.001) {
-        const distFromStall = absDeg - CONST.stallOnsetDeg;
+      if (flapHighLift > 0.001 && cl > 0) {
+        const distFromStall = absDeg - onsetDeg;
         const stallFrac = distFromStall < 0
           ? clamp((distFromStall + 4) / 4, 0, 1)
           : clamp(1 - distFromStall / 4, 0, 1);
@@ -2139,12 +2314,6 @@
       }
 
       return cl;
-    }
-
-    function reduceRelativeAlpha(alphaRad, reduction) {
-      const absAlpha = Math.abs(alphaRad);
-      const newAbs = Math.max(absAlpha - reduction, 0);
-      return Math.sign(alphaRad || 1) * newAbs;
     }
 
     function dynamicPressure(rho, speed) {
@@ -2167,13 +2336,49 @@
     }
 
     function machCLMultiplier(mach) {
-      if (mach <= 0.4) return 1;
+      // Matches AeroComputer.GetMachCLMultiplier: Prandtl-Glauert applied
+      // CONTINUOUSLY from Mach 0 (the old 0.4 cutoff was a 9% lift step and
+      // was removed from the mod), transonic falloff t*(2-t) with bounded
+      // slope (the old sqrt(t) had an infinite derivative at onset).
       if (mach <= CONST.machCLReductionOnset) {
-        const beta = Math.sqrt(Math.max(1 - mach * mach, 0.001));
-        return Math.min(1 / beta, CONST.prandtlGlauertMaxBoost);
+        if (mach <= 0) return 1;
+        const m2 = Math.min(mach * mach, 0.99);
+        return Math.min(1 / Math.sqrt(1 - m2), CONST.prandtlGlauertMaxBoost);
       }
       const t = clamp((mach - CONST.machCLReductionOnset) / (2 - CONST.machCLReductionOnset), 0, 1);
-      return CONST.prandtlGlauertMaxBoost + (CONST.machSupersonicCLMultiplier - CONST.prandtlGlauertMaxBoost) * Math.sqrt(t);
+      return CONST.prandtlGlauertMaxBoost + (CONST.machSupersonicCLMultiplier - CONST.prandtlGlauertMaxBoost) * t * (2 - t);
+    }
+
+    function machStallScale(mach) {
+      // Matches the mod's high-Mach stall onset reduction.
+      if (mach <= CONST.machStallReductionStart) return 1;
+      const t = clamp((mach - CONST.machStallReductionStart) / (1 - CONST.machStallReductionStart), 0, 1);
+      return 1 - CONST.machStallReductionAmount * t;
+    }
+
+    function saturateDeflection(deflRad) {
+      // Matches AeroSession.SaturateDeflection (DATCOM plain-flap decay).
+      const abs = Math.abs(deflRad);
+      if (abs <= CONST.deflectionSaturationOnsetRad) return deflRad;
+      const eff = CONST.deflectionSaturationOnsetRad
+        + CONST.deflectionSaturationSlope * (abs - CONST.deflectionSaturationOnsetRad);
+      return deflRad >= 0 ? eff : -eff;
+    }
+
+    function relativeRetention(totalChordCells, controlChordCells) {
+      // Matches the mod's relative-AoA retention: max(sqrt(cf/c), floor).
+      const cfc = clamp(controlChordCells / Math.max(totalChordCells, 1), 0.05, 0.95);
+      return Math.max(Math.sqrt(cfc), CONST.relativeAoAFraction);
+    }
+
+    function slotStallBonusDeg(deflRad) {
+      // Matches the mod's hinge-gap slot effect on a deflected control
+      // surface behind an upstream row: stall onset bonus ramping over the
+      // first ~10 deg of RAW deflection.
+      const abs = Math.abs(deflRad);
+      if (abs <= 0.001) return 0;
+      return CONST.flapSlotStallBonusDeg
+        * Math.min(abs / CONST.flapSlotFullBonusDeflectionRad, 1);
     }
 
     function machTuckFraction(mach) {
@@ -2199,12 +2404,17 @@
     }
 
     function groundEffect(wingspan, altitude) {
+      // Matches GroundEffect.Compute: McCormick's fit to the Wieselsberger
+      // image-vortex result, sigma = (1 - 1.32 h/b) / (1.05 + 7.4 h/b).
+      // The mod also scales tail DOWNWASH by (1 - sigma) — same image-vortex
+      // physics — which is returned here for evaluateAircraft to apply.
       if (altitude < 0 || wingspan < 0.1 || altitude > wingspan * CONST.groundEffectHeightMultiplier) {
-        return { lift: 1, induced: 1 };
+        return { lift: 1, induced: 1, downwash: 1 };
       }
       const hOverB = altitude / wingspan;
-      const factor = 1 / (16 * hOverB * hOverB + 1);
-      return { lift: 1 + 0.1 * factor, induced: 1 - factor };
+      const sigma = (1 - 1.32 * hOverB) / (1.05 + 7.4 * hOverB);
+      if (sigma <= 0) return { lift: 1, induced: 1, downwash: 1 };
+      return { lift: 1 + 0.1 * sigma, induced: 1 - sigma, downwash: 1 - sigma };
     }
 
     function tableLookup(xs, ys, x) {
